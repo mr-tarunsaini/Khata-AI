@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --background: #F8F7F2;
+    --surface: #FFFFFF;
+    --surface-muted: #F0F1ED;
+    --foreground: #17233B;
+    --muted: #667085;
+    --primary: #253B73;
+    --primary-foreground: #FFFFFF;
+    --action: #087F6E;
+    --action-foreground: #FFFFFF;
+    --accent: #E7A23B;
+    --border: #E3E5E0;
+    --success: #16794B;
+    --warning: #A86408;
+    --danger: #B42318;
+    --radius: 16px;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    font-family: 'Noto Sans', 'Noto Sans Devanagari', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: var(--background);
+    color: var(--foreground);
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Custom animations for voice interaction */
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(8, 127, 110, 0.7);
+  }
+  70% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 20px rgba(8, 127, 110, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(8, 127, 110, 0);
+  }
+}
+
+@keyframes wave-bar {
+  0%, 100% {
+    height: 8px;
+  }
+  50% {
+    height: 36px;
+  }
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-wave-bar {
+  animation: wave-bar 0.9s ease-in-out infinite alternate;
+}

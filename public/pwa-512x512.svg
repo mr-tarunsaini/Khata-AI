@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="100" fill="#253B73"/>
+  <rect x="96" y="80" width="320" height="352" rx="36" fill="#F8F7F2"/>
+  <line x1="150" y1="80" x2="150" y2="432" stroke="#E3E5E0" stroke-width="10"/>
+  <rect x="180" y="130" width="180" height="30" rx="15" fill="#087F6E"/>
+  <rect x="180" y="180" width="120" height="24" rx="12" fill="#253B73"/>
+  
+  <!-- Glowing center voice aura -->
+  <circle cx="270" cy="290" r="68" fill="#253B73"/>
+  <rect x="258" y="258" width="24" height="42" rx="12" fill="#E7A23B"/>
+  <path d="M246 284C246 297.255 256.745 308 270 308C283.255 308 294 297.255 294 284" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"/>
+  <line x1="270" y1="308" x2="270" y2="324" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"/>
+  <line x1="255" y1="324" x2="285" y2="324" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"/>
+</svg>
