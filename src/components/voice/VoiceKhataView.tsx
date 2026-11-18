@@ -10,6 +10,7 @@ import { speechRegistry } from '@/services/speech/speechRegistry'
 import { ActiveProviderType } from '@/services/speech/SpeechProvider'
 import { SCRIPTED_DEMO_SCENARIOS, mockSpeechProvider } from '@/services/speech/MockSpeechProvider'
 import { webSpeechProvider } from '@/services/speech/WebSpeechProvider'
+import { audioRecorder } from '@/services/speech/audioRecorder'
 import { parseIntentFromTranscript } from '@/services/parser/intentParser'
 import { resolveCustomer, buildDuplicateClarificationPrompt } from '@/services/ledger/customerResolver'
 import { formatINR, formatSpokenINR } from '@/lib/money'
@@ -64,10 +65,10 @@ export const VoiceKhataView: React.FC = () => {
   const [latencyBreakdown, setLatencyBreakdown] = useState<LatencyBreakdown | null>(null)
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [testInput, setTestInput] = useState<string>('')
+  const [audioVolume, setAudioVolume] = useState<number>(0)
 
   // Abort controller for cancellation
   const abortControllerRef = useRef<AbortController | null>(null)
-  const speechEndTimeRef = useRef<number>(0)
 
   // Listen to provider registry changes
   useEffect(() => {
@@ -188,8 +189,33 @@ export const VoiceKhataView: React.FC = () => {
       const intentStart = performance.now()
       setStatus('understanding')
 
-      // Parse intent deterministically
-      const intent = parseIntentFromTranscript(cleanText, Boolean(pendingDraft))
+      // 1. Try Gemini API via Gateway, fallback to rule-based parser
+      let intent: ParsedVoiceIntent
+      try {
+        const geminiRes = await fetch('/api/voice/intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transcript: cleanText, hasPendingDraft: Boolean(pendingDraft) })
+        })
+        const geminiData = await geminiRes.json()
+        if (geminiData && !geminiData.fallbackToRuleParser && geminiData.intent) {
+          intent = {
+            intent: geminiData.intent,
+            customer_name: geminiData.customer_name || null,
+            amount_paise: geminiData.amount_paise || null,
+            transaction_date: getTodayDateString(),
+            relative_date_phrase: geminiData.relative_date_phrase || null,
+            currency: 'INR',
+            confidence: geminiData.confidence || 0.95,
+            source_transcript: cleanText
+          }
+        } else {
+          intent = parseIntentFromTranscript(cleanText, Boolean(pendingDraft))
+        }
+      } catch {
+        intent = parseIntentFromTranscript(cleanText, Boolean(pendingDraft))
+      }
+
       const intentMs = Math.round(performance.now() - intentStart)
       setParsedIntent(intent)
 
@@ -318,6 +344,16 @@ export const VoiceKhataView: React.FC = () => {
     setStatus('listening')
 
     abortControllerRef.current = new AbortController()
+
+    // If using Gnani provider, start real audio recorder for audio payload
+    if (providerType === 'gnani') {
+      try {
+        await audioRecorder.startRecording((volume) => setAudioVolume(volume))
+      } catch (e: any) {
+        console.warn('Microphone recording error:', e)
+      }
+    }
+
     const provider = speechRegistry.getActiveProvider()
 
     try {
@@ -345,15 +381,34 @@ export const VoiceKhataView: React.FC = () => {
   }
 
   // Stop Voice Capture
-  const handleStopCapture = () => {
+  const handleStopCapture = async () => {
+    setAudioVolume(0)
     if (providerType === 'web-speech') {
       webSpeechProvider.stopCapture()
+    } else if (providerType === 'gnani') {
+      try {
+        const audioBlob = await audioRecorder.stopRecording()
+        // If Gnani provider needs the blob
+        if (status === 'listening') {
+          const provider = speechRegistry.getActiveProvider()
+          const res = await provider.streamTranscription({
+            audio: audioBlob,
+            language: language === 'en' ? 'en-IN' : 'hi-IN'
+          })
+          if (res.text) {
+            processTranscript(res.text, res.latencyMs)
+          }
+        }
+      } catch (err: any) {
+        console.warn('Gnani stop error:', err)
+      }
     }
-    // For mock provider, streaming completes naturally or resolves
   }
 
   // Cancel Operation
   const handleCancel = () => {
+    setAudioVolume(0)
+    audioRecorder.abortRecording()
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
     }
@@ -528,10 +583,11 @@ export const VoiceKhataView: React.FC = () => {
           disabled={!isOnline && providerType !== 'mock'}
         />
 
-        {/* Audio Waveform */}
+        {/* Audio Waveform with dynamic volume */}
         <AudioWaveform
           isListening={status === 'listening'}
           isProcessing={status === 'processing' || status === 'understanding'}
+          volume={audioVolume}
         />
 
         {/* Interim / Streaming Text Preview */}

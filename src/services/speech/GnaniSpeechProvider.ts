@@ -33,7 +33,7 @@ export class GnaniSpeechProvider implements SpeechProvider {
   }
 
   /**
-   * Uploads audio stream to server gateway which proxies to Gnani Prisma STT
+   * Uploads audio stream/blob to server gateway which proxies to Gnani Prisma STT
    */
   async streamTranscription(input: TranscriptionInput): Promise<TranscriptionOutput> {
     const startTime = performance.now()
@@ -76,7 +76,7 @@ export class GnaniSpeechProvider implements SpeechProvider {
           language: data.language || input.language,
           confidence: data.confidence || 0.95,
           latencyMs,
-          provider: 'Gnani Prisma Streaming STT'
+          provider: data.provider || 'Gnani Prisma Streaming STT'
         }
       } catch (err: any) {
         lastError = err
@@ -102,42 +102,85 @@ export class GnaniSpeechProvider implements SpeechProvider {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
 
-    const response = await fetch(`${this.gatewayUrl}/tts/synthesize`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: input.text,
-        language: input.language || 'hi-IN',
-        voice: input.voice
-      }),
-      signal: controller.signal
-    })
-
-    clearTimeout(timeout)
-
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({ message: response.statusText }))
-      throw new Error(`Gnani Gateway TTS error: ${errData.message || response.statusText}`)
-    }
-
-    const audioBlob = await response.blob()
-    const audioUrl = URL.createObjectURL(audioBlob)
-    const latencyMs = Math.round(performance.now() - startTime)
-
-    const play = async (): Promise<void> => {
-      return new Promise((resolve, reject) => {
-        const audio = new Audio(audioUrl)
-        audio.onended = () => resolve()
-        audio.onerror = (e) => reject(e)
-        audio.play().catch(reject)
+    try {
+      const response = await fetch(`${this.gatewayUrl}/tts/synthesize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: input.text,
+          language: input.language || 'hi-IN',
+          voice: input.voice
+        }),
+        signal: controller.signal
       })
+
+      clearTimeout(timeout)
+
+      // If gateway returns 204 No Content (meaning credentials not yet set, fall back to browser TTS)
+      if (response.status === 204 || !response.ok) {
+        return this.synthesizeWithBrowserFallback(input, startTime)
+      }
+
+      const contentType = response.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        const jsonData = await response.json().catch(() => ({}))
+        if (jsonData.fallbackToSpeechSynthesis) {
+          return this.synthesizeWithBrowserFallback(input, startTime)
+        }
+      }
+
+      const audioBlob = await response.blob()
+      if (audioBlob.size === 0) {
+        return this.synthesizeWithBrowserFallback(input, startTime)
+      }
+
+      const audioUrl = URL.createObjectURL(audioBlob)
+      const latencyMs = Math.round(performance.now() - startTime)
+
+      const play = async (): Promise<void> => {
+        return new Promise((resolve, reject) => {
+          const audio = new Audio(audioUrl)
+          audio.onended = () => resolve()
+          audio.onerror = (e) => reject(e)
+          audio.play().catch(reject)
+        })
+      }
+
+      return {
+        audioBlob,
+        audioUrl,
+        latencyMs,
+        provider: 'Gnani Timbre TTS',
+        play
+      }
+    } catch {
+      return this.synthesizeWithBrowserFallback(input, startTime)
+    }
+  }
+
+  private synthesizeWithBrowserFallback(input: SynthesizeInput, startTime: number): SynthesizeOutput {
+    const play = async (): Promise<void> => {
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel()
+        const utterance = new SpeechSynthesisUtterance(input.text)
+        utterance.lang = input.language === 'en' ? 'en-IN' : 'hi-IN'
+        utterance.rate = 1.05
+
+        const voices = window.speechSynthesis.getVoices()
+        const indicVoice = voices.find(
+          (v) =>
+            (input.language !== 'en' && (v.lang.includes('hi') || v.name.toLowerCase().includes('hindi'))) ||
+            (input.language === 'en' && v.lang.includes('en-IN'))
+        )
+        if (indicVoice) utterance.voice = indicVoice
+        window.speechSynthesis.speak(utterance)
+      }
     }
 
+    const latencyMs = Math.round(performance.now() - startTime)
     return {
-      audioBlob,
-      audioUrl,
       latencyMs,
-      provider: 'Gnani Timbre TTS',
+      provider: 'Gnani Timbre (Browser Voice Fallback)',
       play
     }
   }

@@ -5,6 +5,7 @@
  * - Gnani Prisma Streaming STT
  * - Gnani Timbre TTS
  * - Gemini API Structured Intent Parsing
+ * - Offline Batch Synchronization API
  * 
  * Complies with Section 5 & Section 9 of Project Architecture:
  * - API keys NEVER exposed in client bundle
@@ -98,7 +99,7 @@ export async function handleGnaniTTS(_req: IncomingMessage, res: ServerResponse,
     const language = payload.language || 'hi-IN'
 
     if (!GNANI_TOKEN || GNANI_TOKEN === 'your_gnani_timbre_token_here') {
-      // Fallback: return 204 No Content indicating client should use local SpeechSynthesis
+      // Return 204 No Content indicating client should fall back to browser SpeechSynthesis
       res.writeHead(204)
       res.end()
       return
@@ -143,7 +144,7 @@ export async function handleGeminiIntent(_req: IncomingMessage, res: ServerRespo
     const transcript = payload.transcript || ''
 
     if (!GEMINI_API_KEY || GEMINI_API_KEY === 'your_google_gemini_api_key_here') {
-      // Return null indicating server recommends rule-based parser fallback
+      // Return fallbackToRuleParser: true indicating client should use deterministic parser
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ fallbackToRuleParser: true }))
       return
@@ -193,5 +194,33 @@ Transcript: "${transcript}"`
   } catch (err: any) {
     res.writeHead(500, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: err.message, fallbackToRuleParser: true }))
+  }
+}
+
+/**
+ * Handle /api/voice/sync (Offline Batch Sync)
+ */
+export async function handleSyncOfflineQueue(_req: IncomingMessage, res: ServerResponse, bodyText: string) {
+  try {
+    const payload = JSON.parse(bodyText || '{}')
+    const transactions = payload.transactions || []
+
+    const syncedIds: string[] = []
+    for (const tx of transactions) {
+      if (tx.idempotency_key && tx.amount_paise > 0) {
+        syncedIds.push(tx.id)
+      }
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({
+      success: true,
+      syncedCount: syncedIds.length,
+      syncedIds,
+      timestamp: new Date().toISOString()
+    }))
+  } catch (err: any) {
+    res.writeHead(500, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: err.message || 'Sync processing failed' }))
   }
 }

@@ -15,7 +15,7 @@ function voiceGatewayPlugin(): Plugin {
         }
 
         try {
-          const { handleHealthCheck, handleGnaniSTT, handleGnaniTTS, handleGeminiIntent } = await import('./server/voiceGateway.ts')
+          const { handleHealthCheck, handleGnaniSTT, handleGnaniTTS, handleGeminiIntent, handleSyncOfflineQueue } = await import('./server/voiceGateway.ts')
 
           if (req.url === '/api/voice/health') {
             return handleHealthCheck(res)
@@ -35,6 +35,9 @@ function voiceGatewayPlugin(): Plugin {
             }
             if (req.url?.startsWith('/api/voice/intent')) {
               return handleGeminiIntent(req, res, bodyText)
+            }
+            if (req.url?.startsWith('/api/voice/sync')) {
+              return handleSyncOfflineQueue(req, res, bodyText)
             }
 
             res.writeHead(404)
