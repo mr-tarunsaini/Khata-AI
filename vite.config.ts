@@ -1,14 +1,60 @@
 import { defineConfig } from 'vite'
+import type { Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 import { fileURLToPath, URL } from 'node:url'
+
+function voiceGatewayPlugin(): Plugin {
+  return {
+    name: 'voice-gateway-plugin',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        if (!req.url?.startsWith('/api/voice')) {
+          return next()
+        }
+
+        try {
+          const { handleHealthCheck, handleGnaniSTT, handleGnaniTTS, handleGeminiIntent } = await import('./server/voiceGateway.ts')
+
+          if (req.url === '/api/voice/health') {
+            return handleHealthCheck(res)
+          }
+
+          const chunks: Buffer[] = []
+          req.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
+          req.on('end', async () => {
+            const bodyBuffer = Buffer.concat(chunks)
+            const bodyText = bodyBuffer.toString('utf-8')
+
+            if (req.url?.startsWith('/api/voice/stt/stream')) {
+              return handleGnaniSTT(req, res, bodyBuffer)
+            }
+            if (req.url?.startsWith('/api/voice/tts/synthesize')) {
+              return handleGnaniTTS(req, res, bodyText)
+            }
+            if (req.url?.startsWith('/api/voice/intent')) {
+              return handleGeminiIntent(req, res, bodyText)
+            }
+
+            res.writeHead(404)
+            res.end()
+          })
+        } catch (err: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: err.message }))
+        }
+      })
+    }
+  }
+}
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    voiceGatewayPlugin(),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'robots.txt'],

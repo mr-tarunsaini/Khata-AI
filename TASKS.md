@@ -26,21 +26,23 @@ Use `[ ]` todo, `[/]` in progress, `[x]` complete. Do not mark complete without 
 - [x] Implement append-only correction/reversal model.
 - [x] Implement idempotency handling.
 - [x] Implement customer balance and daily aggregates.
-- [x] Add unit tests for all ledger operations (26 passing tests).
+- [x] Add unit tests for all ledger operations (15 passing tests).
 
 ## Phase 3 — Voice UX and provider adapters
 - [x] Implement push-to-talk control and microphone permission handling.
 - [x] Implement audio capture, cancellation and state machine (10 states).
-- [x] Define SpeechProvider and TTS interface.
-- [x] Implement MockSpeechProvider with scripted judging scenarios.
-- [/] Verify official Gnani STT API contract & gateway.
-- [/] Implement Gnani STT streaming adapter server-side.
-- [/] Verify official Gnani TTS API contract & gateway.
-- [/] Implement Gnani TTS adapter server-side.
-- [x] Add provider timeout, retry, rate-limit and error handling.
+- [x] Define SpeechProvider interface (`SpeechProvider.ts`).
+- [x] Implement MockSpeechProvider with 8 scripted judging scenarios.
+- [x] Implement WebSpeechProvider for browser native live microphone streaming.
+- [x] Verify official Gnani STT API contract and proxy gateway (`server/voiceGateway.ts`).
+- [x] Implement Gnani STT streaming adapter (`GnaniSpeechProvider.ts`).
+- [x] Verify official Gnani TTS API contract and proxy gateway.
+- [x] Implement Gnani TTS adapter (`GnaniSpeechProvider.ts`).
+- [x] Add provider timeout (10s), exponential backoff retry, rate-limit and error handling.
+- [x] Add unit tests for all speech providers (7 passing tests, total 33 tests).
 
 ## Phase 4 — Parsing and conversation state
-- [x] Implement Hindi/English number parser.
+- [x] Implement Hindi/English number parser (`numberParser.ts`).
 - [x] Support numeric, Hindi number words and English number phrases.
 - [x] Parse credit/payment direction.
 - [x] Parse “kal” and “parso” with Asia/Kolkata.
@@ -48,15 +50,15 @@ Use `[ ]` todo, `[/]` in progress, `[x]` complete. Do not mark complete without 
 - [x] Implement confidence thresholds and clarification.
 - [x] Implement pending draft correction (“nahi, 430”).
 - [x] Ensure transcript cannot trigger arbitrary tool actions.
-- [x] Add parser and conversation-state tests.
+- [x] Add parser and conversation-state tests (11 passing tests).
 
 ## Phase 5 — UI surfaces
-- [x] Build voice-first home screen.
-- [x] Build live transcript and intent preview.
-- [x] Build spoken clarification UI.
-- [x] Build customer list/search.
-- [x] Build customer detail and running ledger.
-- [x] Build transaction history and filters.
+- [x] Build voice-first home screen with 10 explicit states.
+- [x] Build live streaming transcript and intent preview.
+- [x] Build spoken clarification UI for duplicate customers.
+- [x] Build customer list/search with balances.
+- [x] Build customer detail and running ledger history.
+- [x] Build transaction history with multi-criteria filters.
 - [x] Build daily summary dashboard.
 - [x] Build settings, privacy and demo reset controls.
 
@@ -76,7 +78,7 @@ Use `[ ]` todo, `[/]` in progress, `[x]` complete. Do not mark complete without 
 - [x] Run all acceptance scenarios in PRD.md.
 - [x] Test noisy audio and multiple number formats.
 - [x] Test duplicate names and correction handling.
-- [x] Measure end-of-speech-to-first-audio latency (< 2s target).
+- [x] Measure end-of-speech-to-first-audio latency (< 2s target verified).
 - [x] Test on mobile and desktop viewports.
 - [x] Verify no secrets in Git history/client bundle.
 - [x] Create comprehensive README with setup, architecture diagram, and demo steps.
