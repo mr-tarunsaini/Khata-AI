@@ -89,6 +89,14 @@ CREATE INDEX IF NOT EXISTS idx_ledger_idempotency ON public.ledger_transactions(
 CREATE INDEX IF NOT EXISTS idx_audit_shop ON public.audit_events(shop_id, created_at DESC);
 
 -- =============================================================================
+-- GRANT SCHEMA AND TABLE PERMISSIONS TO POSTGREST ROLES
+-- =============================================================================
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
+GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated;
+
+-- =============================================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES
 -- =============================================================================
 ALTER TABLE public.shops ENABLE ROW LEVEL SECURITY;
@@ -104,56 +112,121 @@ RETURNS UUID AS $$
   SELECT shop_id FROM public.profiles WHERE id = auth.uid() LIMIT 1;
 $$ LANGUAGE sql SECURITY DEFINER STABLE;
 
--- 1. Shops RLS: Members can view their own shop
+-- 1. Shops RLS: Authenticated users can create a shop and view/update their own shop
+DROP POLICY IF EXISTS shop_member_select ON public.shops;
 CREATE POLICY shop_member_select ON public.shops
-  FOR SELECT USING (id = public.get_auth_shop_id());
+  FOR SELECT TO authenticated USING (id = public.get_auth_shop_id() OR id IN (SELECT shop_id FROM public.profiles WHERE id = auth.uid()));
 
--- 2. Profiles RLS: Users can view profiles in their own shop
+DROP POLICY IF EXISTS shop_member_insert ON public.shops;
+CREATE POLICY shop_member_insert ON public.shops
+  FOR INSERT TO authenticated WITH CHECK (true);
+
+DROP POLICY IF EXISTS shop_member_update ON public.shops;
+CREATE POLICY shop_member_update ON public.shops
+  FOR UPDATE TO authenticated USING (id = public.get_auth_shop_id());
+
+-- 2. Profiles RLS: Users can view profiles in their own shop and create/update their own profile
+DROP POLICY IF EXISTS profile_shop_select ON public.profiles;
 CREATE POLICY profile_shop_select ON public.profiles
-  FOR SELECT USING (shop_id = public.get_auth_shop_id());
+  FOR SELECT TO authenticated USING (shop_id = public.get_auth_shop_id() OR id = auth.uid());
 
+DROP POLICY IF EXISTS profile_user_insert ON public.profiles;
+CREATE POLICY profile_user_insert ON public.profiles
+  FOR INSERT TO authenticated WITH CHECK (id = auth.uid());
+
+DROP POLICY IF EXISTS profile_user_update ON public.profiles;
 CREATE POLICY profile_user_update ON public.profiles
-  FOR UPDATE USING (id = auth.uid());
+  FOR UPDATE TO authenticated USING (id = auth.uid());
 
--- 3. Customers RLS: Shop-scoped read and write
+-- 3. Customers RLS: Shop-scoped read, write, update, delete
+DROP POLICY IF EXISTS customer_shop_select ON public.customers;
 CREATE POLICY customer_shop_select ON public.customers
-  FOR SELECT USING (shop_id = public.get_auth_shop_id());
+  FOR SELECT TO authenticated USING (shop_id = public.get_auth_shop_id());
 
+DROP POLICY IF EXISTS customer_shop_insert ON public.customers;
 CREATE POLICY customer_shop_insert ON public.customers
-  FOR INSERT WITH CHECK (shop_id = public.get_auth_shop_id());
+  FOR INSERT TO authenticated WITH CHECK (shop_id = public.get_auth_shop_id());
 
+DROP POLICY IF EXISTS customer_shop_update ON public.customers;
 CREATE POLICY customer_shop_update ON public.customers
-  FOR UPDATE USING (shop_id = public.get_auth_shop_id());
+  FOR UPDATE TO authenticated USING (shop_id = public.get_auth_shop_id());
+
+DROP POLICY IF EXISTS customer_shop_delete ON public.customers;
+CREATE POLICY customer_shop_delete ON public.customers
+  FOR DELETE TO authenticated USING (shop_id = public.get_auth_shop_id());
 
 -- 4. Ledger Transactions RLS: Strictly shop-scoped append-only
+DROP POLICY IF EXISTS ledger_shop_select ON public.ledger_transactions;
 CREATE POLICY ledger_shop_select ON public.ledger_transactions
-  FOR SELECT USING (shop_id = public.get_auth_shop_id());
+  FOR SELECT TO authenticated USING (shop_id = public.get_auth_shop_id());
 
+DROP POLICY IF EXISTS ledger_shop_insert ON public.ledger_transactions;
 CREATE POLICY ledger_shop_insert ON public.ledger_transactions
-  FOR INSERT WITH CHECK (shop_id = public.get_auth_shop_id());
+  FOR INSERT TO authenticated WITH CHECK (shop_id = public.get_auth_shop_id());
 
--- Reversals / Corrections can update status if permitted
+DROP POLICY IF EXISTS ledger_shop_update ON public.ledger_transactions;
 CREATE POLICY ledger_shop_update ON public.ledger_transactions
-  FOR UPDATE USING (shop_id = public.get_auth_shop_id());
+  FOR UPDATE TO authenticated USING (shop_id = public.get_auth_shop_id());
 
 -- 5. Audit Events RLS: Shop-scoped read and insert
+DROP POLICY IF EXISTS audit_shop_select ON public.audit_events;
 CREATE POLICY audit_shop_select ON public.audit_events
-  FOR SELECT USING (shop_id = public.get_auth_shop_id());
+  FOR SELECT TO authenticated USING (shop_id = public.get_auth_shop_id());
 
+DROP POLICY IF EXISTS audit_shop_insert ON public.audit_events;
 CREATE POLICY audit_shop_insert ON public.audit_events
-  FOR INSERT WITH CHECK (shop_id = public.get_auth_shop_id());
+  FOR INSERT TO authenticated WITH CHECK (shop_id = public.get_auth_shop_id());
 
 -- 6. Pending Voice Sessions RLS
-CREATE POLICY pending_session_select ON public.pending_voice_sessions
-  FOR SELECT USING (shop_id = public.get_auth_shop_id());
-
+DROP POLICY IF EXISTS pending_session_select ON public.pending_voice_sessions;
+DROP POLICY IF EXISTS pending_session_all ON public.pending_voice_sessions;
 CREATE POLICY pending_session_all ON public.pending_voice_sessions
-  FOR ALL USING (shop_id = public.get_auth_shop_id());
+  FOR ALL TO authenticated USING (shop_id = public.get_auth_shop_id());
+
+-- =============================================================================
+-- AUTO-PROVISIONING TRIGGER: Automatically set up shop and profile on signup
+-- =============================================================================
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger AS $$
+DECLARE
+  new_shop_id UUID;
+  shop_name_input TEXT;
+  owner_name_input TEXT;
+BEGIN
+  shop_name_input := COALESCE(new.raw_user_meta_data->>'shop_name', 'Sharma Kirana Store');
+  owner_name_input := COALESCE(new.raw_user_meta_data->>'owner_name', split_part(new.email, '@', 1));
+
+  -- Create default shop for new user
+  INSERT INTO public.shops (name, owner_name, default_language)
+  VALUES (shop_name_input, owner_name_input, 'hi')
+  RETURNING id INTO new_shop_id;
+
+  -- Create profile linked to auth user and shop
+  INSERT INTO public.profiles (id, shop_id, role, full_name)
+  VALUES (new.id, new_shop_id, 'OWNER', owner_name_input)
+  ON CONFLICT (id) DO NOTHING;
+
+  -- Seed initial starter customers
+  INSERT INTO public.customers (shop_id, display_name, normalized_name, notes)
+  VALUES
+    (new_shop_id, 'Ramesh Kumar', 'ramesh kumar', 'Regular customer, milk and ration'),
+    (new_shop_id, 'Suresh Patel', 'suresh patel', 'Weekly bulk grocery'),
+    (new_shop_id, 'Geeta Devi', 'geeta devi', 'Monthly settlement'),
+    (new_shop_id, 'Anil Gupta', 'anil gupta', 'Local resident'),
+    (new_shop_id, 'Pooja Verma', 'pooja verma', 'Snacks and dairy');
+
+  RETURN new;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- =============================================================================
 -- SEED DATA (For initial demonstration)
 -- =============================================================================
--- Synthetic Kirana Shop
 INSERT INTO public.shops (id, name, owner_name, timezone, default_language)
 VALUES ('00000000-0000-0000-0000-000000000001', 'Sharma Kirana Store', 'Rajesh Sharma', 'Asia/Kolkata', 'hi')
 ON CONFLICT (id) DO NOTHING;

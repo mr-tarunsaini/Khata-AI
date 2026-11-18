@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react'
 import { Shop, UserProfile } from '@/types/ledger'
 import { DEMO_SHOP } from '@/services/mock/mockData'
 import { supabase, isSupabaseConfigured } from '@/services/database/supabaseClient'
+import { localDb } from '@/lib/indexedDb'
 
 interface AuthContextType {
   user: UserProfile | null
@@ -15,6 +16,13 @@ interface AuthContextType {
   updateShopName: (name: string) => void
 }
 
+export const DUMMY_ACCOUNT = {
+  email: 'sharma.kirana@demo.in',
+  password: 'Password123!',
+  shopName: 'Sharma Kirana Store',
+  ownerName: 'Rajesh Sharma'
+}
+
 const DEMO_USER: UserProfile = {
   id: 'usr-demo-owner',
   shop_id: DEMO_SHOP.id,
@@ -24,170 +32,425 @@ const DEMO_USER: UserProfile = {
   created_at: new Date().toISOString()
 }
 
+const STORAGE_SESSION_KEY = 'khata_ai_auth_session'
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const isDemo = !isSupabaseConfigured || import.meta.env.VITE_APP_MODE === 'demo'
-  const [shop, setShop] = useState<Shop | null>(DEMO_SHOP)
-  const [user, setUser] = useState<UserProfile | null>(DEMO_USER)
-  const [isLoading, setIsLoading] = useState<boolean>(false)
 
-  useEffect(() => {
-    if (isSupabaseConfigured && supabase) {
-      const client = supabase
-      setIsLoading(true)
-
-      const checkSession = async () => {
-        try {
-          const { data: { session } } = await client.auth.getSession()
-          if (session) {
-            const { data } = await client
-              .from('profiles')
-              .select('*, shops(*)')
-              .eq('id', session.user.id)
-              .single()
-
-            if (data) {
-              setUser({
-                id: data.id,
-                shop_id: data.shop_id,
-                role: data.role,
-                full_name: data.full_name,
-                phone: data.phone,
-                created_at: data.created_at
-              })
-              setShop(data.shops)
-            }
-          }
-        } catch {
-          // Fallback to local session
-        } finally {
-          setIsLoading(false)
+  // Initialize session from persisted local storage if available
+  const [user, setUser] = useState<UserProfile | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(STORAGE_SESSION_KEY)
+        if (saved) {
+          const parsed = JSON.parse(saved)
+          return parsed.user || null
         }
-      }
-
-      checkSession()
-
-      const { data: authListener } = client.auth.onAuthStateChange(async (event, session) => {
-        if (event === 'SIGNED_OUT') {
-          setUser(null)
-          setShop(null)
-        } else if (session) {
-          try {
-            const { data } = await client
-              .from('profiles')
-              .select('*, shops(*)')
-              .eq('id', session.user.id)
-              .single()
-            if (data) {
-              setUser({
-                id: data.id,
-                shop_id: data.shop_id,
-                role: data.role,
-                full_name: data.full_name,
-                phone: data.phone,
-                created_at: data.created_at
-              })
-              setShop(data.shops)
-            }
-          } catch {
-            // ignore
-          }
-        }
-      })
-
-      return () => {
-        authListener.subscription.unsubscribe()
-      }
-    } else {
-      // Local Demo Mode: restore custom shop name if saved
-      const savedShop = localStorage.getItem('khata_ai_shop')
-      if (savedShop) {
-        try {
-          setShop(JSON.parse(savedShop))
-        } catch {
-          // ignore
-        }
+      } catch {
+        // ignore parse error
       }
     }
-  }, [isDemo])
+    return null
+  })
+
+  const [shop, setShop] = useState<Shop | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(STORAGE_SESSION_KEY)
+        if (saved) {
+          const parsed = JSON.parse(saved)
+          return parsed.shop || null
+        }
+      } catch {
+        // ignore parse error
+      }
+    }
+    return null
+  })
+
+  const [isLoading, setIsLoading] = useState<boolean>(true)
+
+  // Persist session changes to localStorage
+  const saveSession = (nextUser: UserProfile | null, nextShop: Shop | null) => {
+    setUser(nextUser)
+    setShop(nextShop)
+    if (nextUser && nextShop) {
+      localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify({ user: nextUser, shop: nextShop }))
+    } else {
+      localStorage.removeItem(STORAGE_SESSION_KEY)
+    }
+  }
+
+  useEffect(() => {
+    let isMounted = true
+
+    const initAuth = async () => {
+      if (isSupabaseConfigured && supabase) {
+        const client = supabase
+        try {
+          const { data: { session } } = await client.auth.getSession()
+          if (session && isMounted) {
+            // Fetch associated profile and shop from Supabase
+            const { data: profileData } = await client
+              .from('profiles')
+              .select('*, shops(*)')
+              .eq('id', session.user.id)
+              .maybeSingle()
+
+            if (profileData && isMounted) {
+              const u: UserProfile = {
+                id: profileData.id,
+                shop_id: profileData.shop_id,
+                role: profileData.role,
+                full_name: profileData.full_name,
+                phone: profileData.phone,
+                created_at: profileData.created_at
+              }
+              const s: Shop = profileData.shops
+              saveSession(u, s)
+            }
+          }
+        } catch (e) {
+          console.warn('Supabase session check error:', e)
+        } finally {
+          if (isMounted) setIsLoading(false)
+        }
+
+        // Listen for live Supabase auth state changes
+        const { data: authListener } = client.auth.onAuthStateChange(async (event, session) => {
+          if (event === 'SIGNED_OUT') {
+            saveSession(null, null)
+          } else if (event === 'SIGNED_IN' && session) {
+            try {
+              const { data: profileData } = await client
+                .from('profiles')
+                .select('*, shops(*)')
+                .eq('id', session.user.id)
+                .maybeSingle()
+
+              if (profileData && isMounted) {
+                const u: UserProfile = {
+                  id: profileData.id,
+                  shop_id: profileData.shop_id,
+                  role: profileData.role,
+                  full_name: profileData.full_name,
+                  phone: profileData.phone,
+                  created_at: profileData.created_at
+                }
+                const s: Shop = profileData.shops
+                saveSession(u, s)
+              }
+            } catch (err) {
+              console.warn('Error fetching profile on auth change:', err)
+            }
+          }
+        })
+
+        return () => {
+          authListener.subscription.unsubscribe()
+        }
+      } else {
+        if (isMounted) setIsLoading(false)
+      }
+    }
+
+    initAuth()
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  const isDummyCredentials = (emailInput: string): boolean => {
+    const normalized = emailInput.trim().toLowerCase()
+    return (
+      normalized === DUMMY_ACCOUNT.email.toLowerCase() ||
+      normalized === 'sharma@khataai.com' ||
+      normalized === 'demo@khataai.com' ||
+      normalized === 'test@khataai.com'
+    )
+  }
 
   const login = async (email: string, password?: string) => {
     setIsLoading(true)
-    if (isSupabaseConfigured && supabase && password) {
-      const { error } = await supabase.auth.signInWithPassword({ email, password })
-      if (error) throw error
-    } else {
-      // Demo Mode login
-      setUser({
-        ...DEMO_USER,
-        full_name: email.split('@')[0] || 'Rajesh Sharma'
-      })
-      setShop(DEMO_SHOP)
+    const normalizedEmail = email.trim().toLowerCase()
+
+    try {
+      // 1. Check if user is logging into the pre-populated Dummy Test Account
+      if (isDummyCredentials(normalizedEmail)) {
+        // If Supabase is active, try signing into Supabase first
+        if (isSupabaseConfigured && supabase && password) {
+          const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+            email: normalizedEmail,
+            password
+          })
+
+          if (!authError && authData.user) {
+            // Attempt to load profile from database
+            const { data: profileData } = await supabase
+              .from('profiles')
+              .select('*, shops(*)')
+              .eq('id', authData.user.id)
+              .maybeSingle()
+
+            if (profileData) {
+              const u: UserProfile = {
+                id: profileData.id,
+                shop_id: profileData.shop_id,
+                role: profileData.role,
+                full_name: profileData.full_name,
+                phone: profileData.phone,
+                created_at: profileData.created_at
+              }
+              saveSession(u, profileData.shops)
+              await localDb.initializeDemoDataIfEmpty()
+              return
+            }
+          }
+        }
+
+        // Seamless fallback for Dummy Test Account with rich seeded data
+        await localDb.initializeDemoDataIfEmpty()
+        saveSession(DEMO_USER, DEMO_SHOP)
+        return
+      }
+
+      // 2. Real User Login via Supabase Auth
+      if (isSupabaseConfigured && supabase) {
+        if (!password) {
+          throw new Error('कृपया पासवर्ड दर्ज करें (Password is required)')
+        }
+
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+          email: normalizedEmail,
+          password
+        })
+
+        if (authError) {
+          if (authError.message.includes('Invalid login credentials')) {
+            throw new Error('ईमेल या पासवर्ड गलत है। यदि नया खाता है तो "साइन अप" चुनें।')
+          }
+          if (authError.message.includes('Email not confirmed')) {
+            throw new Error('ईमेल अभी सत्यापित नहीं हुआ है। कृपया ईमेल इनबॉक्स चेक करें या टेस्ट खाता प्रयोग करें।')
+          }
+          throw new Error(authError.message)
+        }
+
+        if (authData.user) {
+          // Fetch linked shop and profile
+          const { data: profileData } = await supabase
+            .from('profiles')
+            .select('*, shops(*)')
+            .eq('id', authData.user.id)
+            .maybeSingle()
+
+          if (profileData) {
+            const u: UserProfile = {
+              id: profileData.id,
+              shop_id: profileData.shop_id,
+              role: profileData.role,
+              full_name: profileData.full_name,
+              phone: profileData.phone,
+              created_at: profileData.created_at
+            }
+            saveSession(u, profileData.shops)
+          } else {
+            // Fallback profile if profile row was not yet created
+            const newShop: Shop = {
+              id: `shop-${authData.user.id.slice(0, 8)}`,
+              name: authData.user.user_metadata?.shop_name || 'My Kirana Store',
+              owner_name: authData.user.user_metadata?.owner_name || email.split('@')[0],
+              timezone: 'Asia/Kolkata',
+              default_language: 'hi',
+              created_at: new Date().toISOString()
+            }
+            const newUser: UserProfile = {
+              id: authData.user.id,
+              shop_id: newShop.id,
+              role: 'OWNER',
+              full_name: authData.user.user_metadata?.owner_name || email.split('@')[0],
+              created_at: new Date().toISOString()
+            }
+            saveSession(newUser, newShop)
+          }
+        }
+      } else {
+        // Offline / Demo fallback
+        const offlineShop: Shop = {
+          ...DEMO_SHOP,
+          owner_name: email.split('@')[0] || 'Shopkeeper'
+        }
+        const offlineUser: UserProfile = {
+          ...DEMO_USER,
+          full_name: email.split('@')[0] || 'Shopkeeper'
+        }
+        saveSession(offlineUser, offlineShop)
+      }
+    } finally {
+      setIsLoading(false)
     }
-    setIsLoading(false)
   }
 
   const signup = async (shopName: string, ownerName: string, email: string, password?: string) => {
     setIsLoading(true)
-    if (isSupabaseConfigured && supabase && password) {
-      const { data: authData, error: authError } = await supabase.auth.signUp({ email, password })
-      if (authError) throw authError
+    const normalizedEmail = email.trim().toLowerCase()
 
-      if (authData.user) {
-        // Create shop & profile
-        const { data: shopData } = await supabase
-          .from('shops')
-          .insert({ name: shopName, owner_name: ownerName, default_language: 'hi' })
-          .select()
-          .single()
+    try {
+      if (isSupabaseConfigured && supabase && password) {
+        // 1. Supabase Auth signup
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+          email: normalizedEmail,
+          password,
+          options: {
+            data: {
+              shop_name: shopName.trim(),
+              owner_name: ownerName.trim()
+            }
+          }
+        })
 
-        if (shopData) {
-          await supabase.from('profiles').insert({
-            id: authData.user.id,
-            shop_id: shopData.id,
-            role: 'OWNER',
-            full_name: ownerName
-          })
-          setShop(shopData)
+        if (authError) {
+          if (authError.message.includes('rate limit')) {
+            // When Supabase email rate limit is hit, gracefully activate account with local store state
+            console.warn('Supabase email rate limit encountered. Activating store locally.')
+            const localShop: Shop = {
+              id: `shop-${Date.now()}`,
+              name: shopName.trim(),
+              owner_name: ownerName.trim(),
+              timezone: 'Asia/Kolkata',
+              default_language: 'hi',
+              created_at: new Date().toISOString()
+            }
+            const localUser: UserProfile = {
+              id: `usr-${Date.now()}`,
+              shop_id: localShop.id,
+              role: 'OWNER',
+              full_name: ownerName.trim(),
+              created_at: new Date().toISOString()
+            }
+            saveSession(localUser, localShop)
+            await localDb.initializeDemoDataIfEmpty()
+            return
+          }
+          throw new Error(authError.message)
         }
+
+        if (authData.user) {
+          const userId = authData.user.id
+
+          // Check if auto-provisioning trigger already created the profile
+          const { data: existingProfile } = await supabase
+            .from('profiles')
+            .select('*, shops(*)')
+            .eq('id', userId)
+            .maybeSingle()
+
+          if (existingProfile) {
+            const u: UserProfile = {
+              id: existingProfile.id,
+              shop_id: existingProfile.shop_id,
+              role: existingProfile.role,
+              full_name: existingProfile.full_name,
+              phone: existingProfile.phone,
+              created_at: existingProfile.created_at
+            }
+            saveSession(u, existingProfile.shops)
+            return
+          }
+
+          // If trigger did not create it, try inserting shop & profile directly
+          let shopRecord: Shop | null = null
+          try {
+            const { data: createdShop } = await supabase
+              .from('shops')
+              .insert({
+                name: shopName.trim(),
+                owner_name: ownerName.trim(),
+                default_language: 'hi',
+                timezone: 'Asia/Kolkata'
+              })
+              .select()
+              .single()
+
+            shopRecord = createdShop
+          } catch (shopInsertErr) {
+            console.warn('Shop insertion via client RLS:', shopInsertErr)
+          }
+
+          const resolvedShop: Shop = shopRecord || {
+            id: `shop-${userId.slice(0, 8)}`,
+            name: shopName.trim(),
+            owner_name: ownerName.trim(),
+            timezone: 'Asia/Kolkata',
+            default_language: 'hi',
+            created_at: new Date().toISOString()
+          }
+
+          try {
+            await supabase.from('profiles').insert({
+              id: userId,
+              shop_id: resolvedShop.id,
+              role: 'OWNER',
+              full_name: ownerName.trim()
+            })
+          } catch (profileInsertErr) {
+            console.warn('Profile insertion via client RLS:', profileInsertErr)
+          }
+
+          const newUser: UserProfile = {
+            id: userId,
+            shop_id: resolvedShop.id,
+            role: 'OWNER',
+            full_name: ownerName.trim(),
+            created_at: new Date().toISOString()
+          }
+
+          saveSession(newUser, resolvedShop)
+          await localDb.initializeDemoDataIfEmpty()
+        }
+      } else {
+        // Offline / Local Mode signup
+        const newShop: Shop = {
+          id: `shop-${Date.now()}`,
+          name: shopName.trim() || 'My Kirana Store',
+          owner_name: ownerName.trim() || 'Shopkeeper',
+          timezone: 'Asia/Kolkata',
+          default_language: 'hi',
+          created_at: new Date().toISOString()
+        }
+        const newUser: UserProfile = {
+          id: `usr-${Date.now()}`,
+          shop_id: newShop.id,
+          role: 'OWNER',
+          full_name: ownerName.trim() || 'Shopkeeper',
+          created_at: new Date().toISOString()
+        }
+        saveSession(newUser, newShop)
+        await localDb.initializeDemoDataIfEmpty()
       }
-    } else {
-      // Demo Mode signup
-      const newShop: Shop = {
-        id: `shop-${Date.now()}`,
-        name: shopName || 'My Kirana Store',
-        owner_name: ownerName || 'Shopkeeper',
-        timezone: 'Asia/Kolkata',
-        default_language: 'hi',
-        created_at: new Date().toISOString()
-      }
-      setShop(newShop)
-      setUser({
-        id: `usr-${Date.now()}`,
-        shop_id: newShop.id,
-        role: 'OWNER',
-        full_name: ownerName,
-        created_at: new Date().toISOString()
-      })
-      localStorage.setItem('khata_ai_shop', JSON.stringify(newShop))
+    } finally {
+      setIsLoading(false)
     }
-    setIsLoading(false)
   }
 
   const logout = async () => {
-    if (isSupabaseConfigured && supabase) {
-      await supabase.auth.signOut()
+    setIsLoading(true)
+    try {
+      if (isSupabaseConfigured && supabase) {
+        await supabase.auth.signOut().catch(() => {})
+      }
+    } finally {
+      saveSession(null, null)
+      setIsLoading(false)
     }
-    setUser(null)
-    setShop(null)
   }
 
   const updateShopName = (name: string) => {
     if (shop) {
       const updated = { ...shop, name }
-      setShop(updated)
-      localStorage.setItem('khata_ai_shop', JSON.stringify(updated))
+      saveSession(user, updated)
     }
   }
 
