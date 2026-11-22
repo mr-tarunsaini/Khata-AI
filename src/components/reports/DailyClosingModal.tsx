@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useLanguage } from '@/contexts/LanguageContext'
 import { Customer, LedgerTransaction, Shop } from '@/types/ledger'
 import { AnalyticsService } from '@/services/ledger/analyticsService'
 import { speechRegistry } from '@/services/speech/speechRegistry'
@@ -31,22 +32,24 @@ export const DailyClosingModal: React.FC<DailyClosingModalProps> = ({
   customers,
   shop
 }) => {
+  const { language } = useLanguage()
   const [isSpeaking, setIsSpeaking] = useState(false)
   const todayStr = getTodayDateString()
 
   if (!isOpen) return null
 
-  const report = AnalyticsService.generateDailyClosingReport(todayStr, transactions, customers)
+  const report = AnalyticsService.generateDailyClosingReport(todayStr, transactions, customers, language)
   const isNetCreditIncrease = report.net_delta_paise >= 0
 
   const handleSpeakSummary = async () => {
     setIsSpeaking(true)
     try {
       const provider = speechRegistry.getActiveProvider()
-      await provider.synthesize({
+      const synth = await provider.synthesize({
         text: report.spoken_summary,
-        language: 'hi'
+        language
       })
+      await synth.play()
     } catch (e) {
       console.error('Speech synthesis error:', e)
     } finally {

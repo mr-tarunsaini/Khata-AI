@@ -64,6 +64,11 @@ export interface SpeechProvider {
    * Converts text into spoken audio
    */
   synthesize(input: SynthesizeInput): Promise<SynthesizeOutput>
+
+  /**
+   * Optional method to halt active speech recognition
+   */
+  stop?(): void
 }
 
 export type ActiveProviderType = 'mock' | 'web-speech' | 'gnani'

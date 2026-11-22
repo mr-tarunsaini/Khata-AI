@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useLanguage } from '@/contexts/LanguageContext'
 import { Customer, LedgerTransaction } from '@/types/ledger'
 import { AnalyticsService } from '@/services/ledger/analyticsService'
 import { speechRegistry } from '@/services/speech/speechRegistry'
@@ -28,6 +29,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
   transactions,
   customers
 }) => {
+  const { language } = useLanguage()
   const [isSpeaking, setIsSpeaking] = useState(false)
 
   if (!isOpen) return null
@@ -36,10 +38,14 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
 
   const handleSpeakOverview = async () => {
     setIsSpeaking(true)
-    const text = `व्यापार विश्लेषण: आपकी दुकान पर कुल ${formatINR(analytics.total_outstanding_paise)} का उधार बाज़ार में है। वसूली दर ${analytics.recovery_rate_percentage} प्रतिशत है। ३० दिन से अधिक पुराने बकायेदार ${analytics.aging_buckets.thirty_plus.count} ग्राहक हैं।`
+    const text =
+      language === 'en'
+        ? `Business analytics: Total market outstanding is ${formatINR(analytics.total_outstanding_paise)}. Recovery rate is ${analytics.recovery_rate_percentage} percent. Overdue customers past thirty days: ${analytics.aging_buckets.thirty_plus.count}.`
+        : `व्यापार विश्लेषण: आपकी दुकान पर कुल ${formatINR(analytics.total_outstanding_paise)} का उधार बाज़ार में है। वसूली दर ${analytics.recovery_rate_percentage} प्रतिशत है। ३० दिन से अधिक पुराने बकायेदार ${analytics.aging_buckets.thirty_plus.count} ग्राहक हैं।`
     try {
       const provider = speechRegistry.getActiveProvider()
-      await provider.synthesize({ text, language: 'hi' })
+      const synth = await provider.synthesize({ text, language })
+      await synth.play()
     } catch (e) {
       console.error('Speech synthesis error:', e)
     } finally {

@@ -69,7 +69,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onSuccess }) => {
         {/* Top Logo & Title */}
         <div className="text-center space-y-2">
           <div className="w-14 h-14 rounded-2xl bg-[#253B73] text-white flex items-center justify-center mx-auto text-2xl font-black shadow-md">
-            खा
+            K
           </div>
           <h1 className="text-2xl font-extrabold text-[#17233B]">खाताAI (KhataAI)</h1>
           <p className="text-xs text-[#667085]">{t.tagline}</p>

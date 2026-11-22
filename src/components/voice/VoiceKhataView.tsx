@@ -17,6 +17,7 @@ import { resolveCustomer, buildDuplicateClarificationPrompt } from '@/services/l
 import { sessionMemory } from '@/services/voice/voiceSessionMemory'
 import { AnalyticsService } from '@/services/ledger/analyticsService'
 import { InventoryService } from '@/services/inventory/inventoryService'
+import { VoiceResponseGenerator } from '@/services/voice/voiceResponseGenerator'
 import { DailyClosingModal } from '@/components/reports/DailyClosingModal'
 import { AnalyticsModal } from '@/components/analytics/AnalyticsModal'
 import { formatINR, formatSpokenINR } from '@/lib/money'
@@ -212,18 +213,13 @@ export const VoiceKhataView: React.FC = () => {
             ? (updatedBal?.balance_paise || 0) + draft.amount_paise
             : (updatedBal?.balance_paise || 0) - draft.amount_paise
 
-        let speechText = ''
-        if (draft.type === 'CREDIT') {
-          speechText = `${draft.customer.display_name} ke naam ${formatSpokenINR(
-            draft.amount_paise,
-            language
-          )} udhaar darj ho gaya. Unka total baaki ${formatINR(newBalPaise)} hai.`
-        } else {
-          speechText = `${draft.customer.display_name} se ${formatSpokenINR(
-            draft.amount_paise,
-            language
-          )} payment darj ho gaya. Ab baaki ${formatINR(newBalPaise)} hai.`
-        }
+        const speechText = VoiceResponseGenerator.transactionSuccess(
+          draft.type,
+          draft.customer.display_name,
+          draft.amount_paise,
+          newBalPaise,
+          language
+        )
 
         setStatus('success')
         setPendingDraft(null)
@@ -263,7 +259,7 @@ export const VoiceKhataView: React.FC = () => {
           activeCustomerId: created.id,
           activeCustomerName: created.display_name
         })
-        const speech = `${created.display_name} ka naya khata jud gaya hai.`
+        const speech = VoiceResponseGenerator.customerCreated(created.display_name, language)
         setStatus('success')
         setNewCustomerPrompt(null)
         await speakResponse(speech, 0, 0, 0)
@@ -339,11 +335,11 @@ export const VoiceKhataView: React.FC = () => {
         const reversal = await undoLastTransaction()
         if (reversal) {
           const cust = customers.find((c) => c.id === reversal.customer_id)
-          const speech = `${cust?.display_name || 'Grahak'} ka ${formatSpokenINR(reversal.amount_paise, language)} ka hisaab undo kar diya gaya.`
+          const speech = VoiceResponseGenerator.undoSuccess(cust?.display_name || 'Grahak', reversal.amount_paise, language)
           setStatus('success')
           await speakResponse(speech, sttMs, intentMs, 10)
         } else {
-          const speech = 'Undo karne ke liye koi haaliya transaction nahi mila.'
+          const speech = VoiceResponseGenerator.undoEmpty(language)
           setStatus('error')
           setErrorMessage(speech)
           await speakResponse(speech, sttMs, intentMs, 0)
@@ -356,7 +352,7 @@ export const VoiceKhataView: React.FC = () => {
       // =======================================================================
       if (intent.intent === 'DAILY_CLOSING_REPORT') {
         setIsClosingModalOpen(true)
-        const report = AnalyticsService.generateDailyClosingReport(getTodayDateString(), transactions, customers)
+        const report = AnalyticsService.generateDailyClosingReport(getTodayDateString(), transactions, customers, language)
         setStatus('success')
         await speakResponse(report.spoken_summary, sttMs, intentMs, 5)
         return
@@ -368,7 +364,10 @@ export const VoiceKhataView: React.FC = () => {
       if (intent.intent === 'ANALYTICS_QUERY') {
         setIsAnalyticsModalOpen(true)
         const analytics = AnalyticsService.calculateBusinessAnalytics(transactions, customers)
-        const speech = `Aapki dukan par kul ${formatINR(analytics.total_outstanding_paise)} ka udhaar baazar mein hai, aur vasooli dar ${analytics.recovery_rate_percentage} percent hai.`
+        const speech =
+          language === 'en'
+            ? `Total market credit is ${formatINR(analytics.total_outstanding_paise)}, and recovery rate is ${analytics.recovery_rate_percentage} percent.`
+            : `आपकी दुकान पर कुल ${formatINR(analytics.total_outstanding_paise)} का उधार बाज़ार में है, और वसूली दर ${analytics.recovery_rate_percentage} प्रतिशत है।`
         setStatus('success')
         await speakResponse(speech, sttMs, intentMs, 5)
         return
@@ -380,12 +379,15 @@ export const VoiceKhataView: React.FC = () => {
       if (intent.intent === 'QUERY_INVENTORY') {
         const found = InventoryService.findItemByQuery(intent.item_name || cleanText, inventoryItems)
         if (found) {
-          const speech = `${found.item_name} ka stock ${found.quantity} ${found.unit} bacha hai.`
+          const speech = VoiceResponseGenerator.inventoryStock(found.item_name, found.quantity, found.unit, language)
           setStatus('success')
           await speakResponse(speech, sttMs, intentMs, 5)
         } else {
           const low = InventoryService.getLowStockItems(inventoryItems)
-          const speech = `Dukan mein ${low.length} items ka stock kam hai.`
+          const speech =
+            language === 'en'
+              ? `There are ${low.length} items with low stock in your store.`
+              : `दुकान में ${low.length} सामान का स्टॉक कम है।`
           setStatus('success')
           await speakResponse(speech, sttMs, intentMs, 5)
         }
@@ -397,12 +399,15 @@ export const VoiceKhataView: React.FC = () => {
         if (found) {
           const qty = intent.item_quantity || 5
           await updateInventoryStock(found.id, qty)
-          const speech = `${found.item_name} mein ${qty} ${found.unit} jod diya gaya. Naya stock ${found.quantity + qty} hai.`
+          const speech = VoiceResponseGenerator.inventoryUpdated(found.item_name, qty, found.quantity + qty, found.unit, language)
           setStatus('success')
           await speakResponse(speech, sttMs, intentMs, 5)
         } else {
           setStatus('error')
-          const speech = 'Samaan nahi mila. Kripya samaan ka sahi naam batayein.'
+          const speech =
+            language === 'en'
+              ? 'Item not found. Please speak the correct item name.'
+              : 'सामान नहीं मिला। कृपया सामान का सही नाम बताएं।'
           setErrorMessage(speech)
           await speakResponse(speech, sttMs, intentMs, 0)
         }
@@ -422,10 +427,11 @@ export const VoiceKhataView: React.FC = () => {
           setPendingDraft(updatedDraft)
           setStatus('understanding')
 
-          const speechText = `Theek hai, ${updatedDraft.customer.display_name} ka ${formatSpokenINR(
+          const speechText = VoiceResponseGenerator.correctionConfirmed(
+            updatedDraft.customer.display_name,
             updatedDraft.amount_paise,
             language
-          )} ${updatedDraft.type === 'CREDIT' ? 'udhaar' : 'payment'} likh raha hoon.`
+          )
           await speakResponse(speechText, sttMs, intentMs, 0)
           return
         }
@@ -444,7 +450,7 @@ export const VoiceKhataView: React.FC = () => {
             }
             setPendingDraft(draft)
             setStatus('understanding')
-            const speechText = `Theek hai, ${cust.display_name} ka amount badal kar ${formatSpokenINR(intent.amount_paise, language)} kar raha hoon.`
+            const speechText = VoiceResponseGenerator.correctionConfirmed(cust.display_name, intent.amount_paise, language)
             await speakResponse(speechText, sttMs, intentMs, 0)
             return
           }
@@ -463,19 +469,19 @@ export const VoiceKhataView: React.FC = () => {
           })
           const bal = customerBalances.get(match.customer.id)
           const balPaise = bal?.balance_paise || 0
-          const speech = `${match.customer.display_name} ka total baaki ${formatINR(balPaise)} hai.`
+          const speech = VoiceResponseGenerator.customerBalance(match.customer.display_name, balPaise, language)
           setStatus('success')
           await speakResponse(speech, sttMs, intentMs, 5)
           return
         } else if (match.type === 'AMBIGUOUS') {
           setStatus('clarification_required')
           setDuplicateCandidates(match.candidates)
-          const prompt = buildDuplicateClarificationPrompt(match.candidates, language)
+          const prompt = VoiceResponseGenerator.duplicateClarification(match.candidates, language)
           await speakResponse(prompt, sttMs, intentMs, 5)
           return
         } else {
           setStatus('error')
-          const msg = `Is naam ke koi customer nahi mile.`
+          const msg = VoiceResponseGenerator.customerNotFound(intent.customer_name, language)
           setErrorMessage(msg)
           await speakResponse(msg, sttMs, intentMs, 0)
           return
@@ -486,14 +492,14 @@ export const VoiceKhataView: React.FC = () => {
       // Daily Credit / Payments
       // =======================================================================
       if (intent.intent === 'QUERY_DAILY_CREDIT') {
-        const speech = `Aaj ${formatSpokenINR(todayAggregates.total_credit_paise, language)} ka udhaar gaya hai.`
+        const speech = VoiceResponseGenerator.dailyCredit(todayAggregates.total_credit_paise, language)
         setStatus('success')
         await speakResponse(speech, sttMs, intentMs, 5)
         return
       }
 
       if (intent.intent === 'QUERY_DAILY_PAYMENTS') {
-        const speech = `Aaj ${formatSpokenINR(todayAggregates.total_payment_paise, language)} ka payment mila hai.`
+        const speech = VoiceResponseGenerator.dailyPayment(todayAggregates.total_payment_paise, language)
         setStatus('success')
         await speakResponse(speech, sttMs, intentMs, 5)
         return
@@ -509,7 +515,10 @@ export const VoiceKhataView: React.FC = () => {
           amount_paise: 0
         })
         setStatus('confirm_create_customer')
-        const speech = `${intent.customer_name} ka naya khata kholna chahte hain?`
+        const speech =
+          language === 'en'
+            ? `Do you want to create a new customer account for ${intent.customer_name}?`
+            : `क्या ${intent.customer_name} का नया खाता खोलना चाहते हैं?`
         await speakResponse(speech, sttMs, intentMs, 0)
         return
       }
@@ -520,7 +529,7 @@ export const VoiceKhataView: React.FC = () => {
       if ((intent.intent === 'ADD_CREDIT' || intent.intent === 'RECORD_PAYMENT') && intent.amount_paise) {
         if (!intent.customer_name) {
           setStatus('clarification_required')
-          const msg = 'Kripya customer ka naam batayein.'
+          const msg = VoiceResponseGenerator.askCustomerName(language)
           setErrorMessage(msg)
           await speakResponse(msg, sttMs, intentMs, 0)
           return
@@ -544,7 +553,7 @@ export const VoiceKhataView: React.FC = () => {
         if (match.type === 'AMBIGUOUS') {
           setStatus('clarification_required')
           setDuplicateCandidates(match.candidates)
-          const prompt = buildDuplicateClarificationPrompt(match.candidates, language)
+          const prompt = VoiceResponseGenerator.duplicateClarification(match.candidates, language)
           await speakResponse(prompt, sttMs, intentMs, 5)
           return
         }
@@ -559,7 +568,7 @@ export const VoiceKhataView: React.FC = () => {
             amount_paise: intent.amount_paise,
             type: intent.intent === 'ADD_CREDIT' ? 'CREDIT' : 'PAYMENT'
           })
-          const prompt = `${intent.customer_name} naye grahak hain. Kya inka naya khata banayein?`
+          const prompt = VoiceResponseGenerator.customerNotFound(intent.customer_name, language)
           await speakResponse(prompt, sttMs, intentMs, 0)
           return
         }
@@ -602,12 +611,16 @@ export const VoiceKhataView: React.FC = () => {
 
     abortControllerRef.current = new AbortController()
 
+    // Gnani Provider records raw microphone audio while button is held
     if (providerType === 'gnani') {
       try {
         await audioRecorder.startRecording((volume) => setAudioVolume(volume))
       } catch (e: any) {
         console.warn('Microphone recording error:', e)
+        setStatus('error')
+        setErrorMessage(e.message || 'Microphone access failed. Please enable mic permissions.')
       }
+      return
     }
 
     const provider = speechRegistry.getActiveProvider()
@@ -639,11 +652,50 @@ export const VoiceKhataView: React.FC = () => {
   // End Voice Capture on button release
   const handleStopCapture = async () => {
     if (status !== 'listening') return
+
     if (providerType === 'gnani') {
       try {
-        await audioRecorder.stopRecording()
-      } catch (e) {
-        // ignore
+        setStatus('processing')
+        const audioBlob = await audioRecorder.stopRecording()
+        setAudioVolume(0)
+
+        if (abortControllerRef.current?.signal.aborted) {
+          setStatus('idle')
+          return
+        }
+
+        if (!audioBlob || audioBlob.size < 200) {
+          setStatus('idle')
+          return
+        }
+
+        const provider = speechRegistry.getActiveProvider()
+        const result = await provider.streamTranscription({
+          audio: audioBlob,
+          language: language === 'en' ? 'en-IN' : 'hi-IN',
+          signal: abortControllerRef.current?.signal
+        })
+
+        if (result.text) {
+          processTranscript(result.text, result.latencyMs)
+        } else {
+          setStatus('idle')
+        }
+      } catch (err: any) {
+        if (err.message?.includes('aborted')) {
+          setStatus('idle')
+        } else {
+          setStatus('error')
+          setErrorMessage(err.message || 'Speech recognition failed')
+        }
+      }
+      return
+    }
+
+    if (providerType === 'web-speech') {
+      const provider = speechRegistry.getActiveProvider()
+      if (provider.stop) {
+        provider.stop()
       }
     }
   }
@@ -654,6 +706,11 @@ export const VoiceKhataView: React.FC = () => {
       abortControllerRef.current = null
     }
     audioRecorder.abortRecording()
+    setAudioVolume(0)
+    const provider = speechRegistry.getActiveProvider()
+    if (provider.stop) {
+      provider.stop()
+    }
     sessionMemory.clear()
     setSessionActiveName(null)
     setStatus('idle')
@@ -718,13 +775,14 @@ export const VoiceKhataView: React.FC = () => {
           </button>
           <button
             onClick={() => handleProviderChange('gnani')}
-            className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
+            className={`px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
               providerType === 'gnani'
                 ? 'bg-[#253B73] text-white shadow-xs'
                 : 'text-[#667085] hover:text-[#17233B]'
             }`}
           >
-            Gnani Gateway
+            <span>Gnani AI</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-[#087F6E]"></span>
           </button>
         </div>
       </div>

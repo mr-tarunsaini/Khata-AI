@@ -4,7 +4,7 @@ import { webSpeechProvider } from './WebSpeechProvider'
 import { gnaniSpeechProvider } from './GnaniSpeechProvider'
 
 class SpeechRegistry {
-  private activeType: ActiveProviderType = 'mock'
+  private activeType: ActiveProviderType = 'gnani'
   private listeners = new Set<(type: ActiveProviderType) => void>()
 
   constructor() {
@@ -13,8 +13,8 @@ class SpeechRegistry {
       if (saved && ['mock', 'web-speech', 'gnani'].includes(saved)) {
         this.activeType = saved
       } else {
-        // Default to mock for predictable demo evaluation, unless user switches to live mic
-        this.activeType = 'mock'
+        // Default to Gnani Vachana AI (STT & TTS)
+        this.activeType = 'gnani'
       }
     }
   }

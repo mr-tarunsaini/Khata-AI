@@ -46,7 +46,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
       <div className="p-4 border-b border-[#E3E5E0] flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-lg bg-[#253B73] flex items-center justify-center text-white font-bold text-sm">
-            खा
+            K
           </div>
           <div>
             <h2 className="text-sm font-bold text-[#17233B] truncate max-w-[140px]">

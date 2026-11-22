@@ -19,7 +19,8 @@ export class AnalyticsService {
   static generateDailyClosingReport(
     date: string = getTodayDateString(),
     transactions: LedgerTransaction[],
-    customers: Customer[]
+    customers: Customer[],
+    language: 'hi' | 'hi-en' | 'en' = 'hi'
   ): DailyClosingReport {
     const dayTx = transactions.filter((t) => t.effective_date === date && t.status === 'POSTED')
 
@@ -86,12 +87,19 @@ export class AnalyticsService {
     // Count new customers registered on this date
     const newCustomersCount = customers.filter((c) => c.created_at.startsWith(date)).length
 
-    // Natural spoken Hindi summary
+    // Natural spoken summary in selected language
     const creditStr = formatINR(totalCreditPaise)
     const paymentStr = formatINR(totalPaymentPaise)
     const netStr = formatINR(Math.abs(netDeltaPaise))
 
-    const spokenSummary = `आज का हिसाब: कुल ${creditStr} का उधार गया, और ${paymentStr} की वसूली हुई। नेट बाज़ार में ${netDeltaPaise >= 0 ? netStr + ' उधार बढ़ा' : netStr + ' की रिकवरी हुई'}।`
+    const spokenSummary =
+      language === 'en'
+        ? `Today's summary: Total credit given is ${creditStr}, and total payment collected is ${paymentStr}. Net market change is ${
+            netDeltaPaise >= 0 ? netStr + ' increase in credit' : netStr + ' cash recovery'
+          }.`
+        : `आज का हिसाब: कुल ${creditStr} का उधार गया, और ${paymentStr} की वसूली हुई। नेट बाज़ार में ${
+            netDeltaPaise >= 0 ? netStr + ' उधार बढ़ा' : netStr + ' की रिकवरी हुई'
+          }।`
 
     return {
       date,

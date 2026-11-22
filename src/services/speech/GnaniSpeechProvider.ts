@@ -45,19 +45,17 @@ export class GnaniSpeechProvider implements SpeechProvider {
           throw new Error('Transcription aborted by user')
         }
 
-        const formData = new FormData()
-        if (input.audio instanceof Blob) {
-          formData.append('audio', input.audio, 'recording.wav')
-        }
-        formData.append('language', input.language || 'hi-IN')
-
         const controller = new AbortController()
         const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
 
-        // Connect to gateway STT endpoint
+        // Connect to gateway STT endpoint with raw audio stream
         const response = await fetch(`${this.gatewayUrl}/stt/stream`, {
           method: 'POST',
-          body: formData,
+          headers: {
+            'Content-Type': input.audio instanceof Blob ? (input.audio.type || 'audio/wav') : 'audio/wav',
+            'x-language': input.language || 'hi-IN'
+          },
+          body: input.audio instanceof Blob ? input.audio : new Blob([], { type: 'audio/wav' }),
           signal: controller.signal
         })
 
@@ -170,7 +168,7 @@ export class GnaniSpeechProvider implements SpeechProvider {
         const indicVoice = voices.find(
           (v) =>
             (input.language !== 'en' && (v.lang.includes('hi') || v.name.toLowerCase().includes('hindi'))) ||
-            (input.language === 'en' && v.lang.includes('en-IN'))
+            (input.language === 'en' && (v.lang.includes('en-IN') || v.lang.startsWith('en')) )
         )
         if (indicVoice) utterance.voice = indicVoice
         window.speechSynthesis.speak(utterance)

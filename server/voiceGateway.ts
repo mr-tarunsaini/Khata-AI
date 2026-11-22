@@ -23,9 +23,8 @@ export interface GatewayHealth {
   timestamp: string
 }
 
-const GNANI_API_KEY = process.env.GNANI_ACCESS_KEY || process.env.GNANI_API_KEY || ''
-const GNANI_TOKEN = process.env.GNANI_TTS_TOKEN || process.env.GNANI_TOKEN || process.env.GNANI_ACCESS_KEY || ''
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ''
+const GNANI_API_KEY = (process.env.GNANI_ACCESS_KEY || process.env.GNANI_API_KEY || '').trim()
+const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || '').trim()
 
 /**
  * Handle /api/voice/health
@@ -58,29 +57,36 @@ export async function handleGnaniSTT(req: IncomingMessage, res: ServerResponse, 
       return
     }
 
-    // Call Gnani Prisma / Vach endpoint
-    const gnaniEndpoint = 'https://asr.gnani.ai/v1/recognize'
-    const gnaniRes = await fetch(gnaniEndpoint, {
+    const langCode = (req.headers['x-language'] as string) || 'hi-IN'
+
+    // Call Gnani Prisma STT via Vachana API
+    const formData = new FormData()
+    const audioBlob = new Blob([bodyBuffer], { type: (req.headers['content-type'] as string) || 'audio/wav' })
+    formData.append('audio_file', audioBlob, 'recording.wav')
+    formData.append('model', 'prisma-v3.0')
+    formData.append('language_code', langCode === 'en' ? 'en-IN' : 'hi-IN')
+    formData.append('format', 'transcribe')
+
+    const gnaniRes = await fetch('https://api.vachana.ai/stt/v3', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${GNANI_API_KEY}`,
-        'Content-Type': req.headers['content-type'] || 'audio/wav',
-        'x-language': (req.headers['x-language'] as string) || 'hi-IN'
+        'X-API-Key-ID': GNANI_API_KEY
       },
-      body: bodyBuffer
+      body: formData
     })
 
     if (!gnaniRes.ok) {
-      throw new Error(`Gnani Prisma API error: ${gnaniRes.statusText}`)
+      const errText = await gnaniRes.text()
+      throw new Error(`Gnani Prisma STT error (${gnaniRes.status}): ${errText}`)
     }
 
     const gnaniData: any = await gnaniRes.json()
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({
       text: gnaniData.transcript || gnaniData.text || '',
-      language: gnaniData.language || 'hi-IN',
-      confidence: gnaniData.confidence || 0.95,
-      provider: 'Gnani Prisma Streaming STT'
+      language: gnaniData.detected_language_code || langCode,
+      confidence: 0.96,
+      provider: 'Gnani Prisma STT'
     }))
   } catch (err: any) {
     res.writeHead(500, { 'Content-Type': 'application/json' })
@@ -97,28 +103,41 @@ export async function handleGnaniTTS(_req: IncomingMessage, res: ServerResponse,
     const textToSpeak = payload.text || ''
     const language = payload.language || 'hi-IN'
 
-    if (!GNANI_TOKEN || GNANI_TOKEN.includes('your_gnani')) {
-      res.writeHead(204)
-      res.end()
+    if (!GNANI_API_KEY || GNANI_API_KEY.includes('your_gnani')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ fallbackToSpeechSynthesis: true }))
       return
     }
 
-    const timbreEndpoint = 'https://tts.gnani.ai/v1/synthesize'
-    const timbreRes = await fetch(timbreEndpoint, {
+    const langCode = language === 'en' ? 'en-IN' : 'hi-IN'
+    const voiceName = language === 'en' ? 'Pranav' : (payload.voice || 'Nalini')
+
+    const timbreRes = await fetch('https://api.vachana.ai/api/v1/tts/inference', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${GNANI_TOKEN}`,
+        'X-API-Key-ID': GNANI_API_KEY,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
         text: textToSpeak,
-        language: language === 'en' ? 'en-IN' : 'hi-IN',
-        voice: payload.voice || 'female_hi_1'
+        voice: voiceName,
+        model: 'timbre-v2.5',
+        language: langCode,
+        speed: 1,
+        audio_config: {
+          encoding: 'linear_pcm',
+          container: 'wav',
+          num_channels: 1,
+          sample_rate: 48000,
+          sample_width: 2
+        }
       })
     })
 
     if (!timbreRes.ok) {
-      throw new Error(`Gnani Timbre API error: ${timbreRes.statusText}`)
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ fallbackToSpeechSynthesis: true }))
+      return
     }
 
     const audioArrayBuffer = await timbreRes.arrayBuffer()
@@ -128,8 +147,8 @@ export async function handleGnaniTTS(_req: IncomingMessage, res: ServerResponse,
     })
     res.end(Buffer.from(audioArrayBuffer))
   } catch (err: any) {
-    res.writeHead(500, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ error: err.message || 'TTS synthesis failed' }))
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ fallbackToSpeechSynthesis: true, error: err.message }))
   }
 }
 

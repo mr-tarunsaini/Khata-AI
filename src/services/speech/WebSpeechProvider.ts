@@ -94,6 +94,16 @@ export class WebSpeechProvider implements SpeechProvider {
     })
   }
 
+  stop(): void {
+    if (this.activeRecognition) {
+      try {
+        this.activeRecognition.stop()
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   async synthesize(input: SynthesizeInput): Promise<SynthesizeOutput> {
     const startTime = performance.now()
 
@@ -109,7 +119,7 @@ export class WebSpeechProvider implements SpeechProvider {
       const indicVoice = voices.find(
         (v) =>
           (input.language !== 'en' && (v.lang.includes('hi') || v.name.toLowerCase().includes('hindi'))) ||
-          (input.language === 'en' && v.lang.includes('en-IN'))
+          (input.language === 'en' && (v.lang.includes('en-IN') || v.lang.startsWith('en')) )
       )
 
       if (indicVoice) {

@@ -142,11 +142,11 @@ export function buildDuplicateClarificationPrompt(
   candidates: Customer[],
   language: 'hi' | 'hi-en' | 'en' = 'hi'
 ): string {
-  const names = candidates.map((c) => c.display_name).join(' ya ')
-
   if (language === 'en') {
     return `There are ${candidates.length} customers with this name: ${candidates.map((c) => c.display_name).join(' or ')}?`
   }
-
-  return `Is naam ke ${candidates.length} customer hain. ${names}?`
+  if (language === 'hi') {
+    return `इस नाम के ${candidates.length} ग्राहक हैं: ${candidates.map((c) => c.display_name).join(' या ')}?`
+  }
+  return `Is naam ke ${candidates.length} customer hain. ${candidates.map((c) => c.display_name).join(' ya ')}?`
 }

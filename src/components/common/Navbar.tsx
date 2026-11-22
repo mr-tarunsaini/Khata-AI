@@ -38,7 +38,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
 
           <div className="flex items-center gap-2.5">
             <div className="w-10 h-10 rounded-xl bg-[#253B73] flex items-center justify-center text-white shadow-xs">
-              <span className="font-bold text-lg tracking-wider">खा</span>
+              <span className="font-bold text-lg tracking-wider">K</span>
             </div>
             <div>
               <div className="flex items-center gap-1.5">
