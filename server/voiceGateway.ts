@@ -138,6 +138,12 @@ export async function handleGnaniTTS(_req: IncomingMessage, res: ServerResponse,
     const langCode = language === 'en' ? 'en-IN' : 'hi-IN'
     const voiceName = language === 'en' ? 'Pranav' : (payload.voice || 'Nalini')
 
+    // Clean text for natural speech (expand currency symbol)
+    const cleanedText = textToSpeak
+      .replace(/₹\s*([0-9,]+)/g, (_m: string, p1: string) => (language === 'en' ? `${p1} rupees` : `${p1} रुपये`))
+      .replace(/₹/g, language === 'en' ? 'rupees' : 'रुपये')
+      .trim()
+
     const timbreRes = await fetch('https://api.vachana.ai/api/v1/tts/inference', {
       method: 'POST',
       headers: {
@@ -145,16 +151,16 @@ export async function handleGnaniTTS(_req: IncomingMessage, res: ServerResponse,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        text: textToSpeak,
+        text: cleanedText,
         voice: voiceName,
         model: 'timbre-v2.5',
         language: langCode,
-        speed: 1,
+        speed: 1.05,
         audio_config: {
           encoding: 'linear_pcm',
           container: 'wav',
           num_channels: 1,
-          sample_rate: 48000,
+          sample_rate: 24000,
           sample_width: 2
         }
       })
@@ -254,13 +260,17 @@ Intents:
 Never calculate balances.
 Transcript: "${transcript}"`
 
-    const result = await model.generateContent(prompt)
+    const generatePromise = model.generateContent(prompt)
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Gemini intent timeout (2500ms)')), 2500)
+    )
+    const result = await Promise.race([generatePromise, timeoutPromise])
     const responseJson = JSON.parse(result.response.text())
 
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify(responseJson))
   } catch (err: any) {
-    res.writeHead(500, { 'Content-Type': 'application/json' })
+    res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: err.message, fallbackToRuleParser: true }))
   }
 }

@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from 'react'
 import { VoiceSessionStatus } from '@/types/voice'
 import { Mic, Loader2, Check, AlertCircle, HelpCircle } from 'lucide-react'
+import { soundPlayer } from '@/services/speech/audioPlayer'
 
 interface PushToTalkButtonProps {
   status: VoiceSessionStatus
@@ -21,6 +22,7 @@ export const PushToTalkButton: React.FC<PushToTalkButtonProps> = ({
   const handlePointerDown = (e: React.PointerEvent) => {
     if (disabled) return
     e.preventDefault()
+    soundPlayer.unlock()
     isPressingRef.current = true
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
       navigator.vibrate(40)
@@ -46,6 +48,7 @@ export const PushToTalkButton: React.FC<PushToTalkButtonProps> = ({
       if (e.code === 'Space' && !e.repeat && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
         if (!isPressingRef.current && !disabled) {
           isPressingRef.current = true
+          soundPlayer.unlock()
           onStartCapture()
         }
       }

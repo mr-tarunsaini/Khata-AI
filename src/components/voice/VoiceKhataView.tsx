@@ -285,34 +285,40 @@ export const VoiceKhataView: React.FC = () => {
       const intentStart = performance.now()
       setStatus('understanding')
 
-      // 1. Try Gemini API via Gateway, fallback to rule-based parser
-      let intent: ParsedVoiceIntent
-      try {
-        const geminiRes = await fetch('/api/voice/intent', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ transcript: cleanText, hasPendingDraft: Boolean(pendingDraft) })
-        })
-        const geminiData = await geminiRes.json()
-        if (geminiData && !geminiData.fallbackToRuleParser && geminiData.intent) {
-          intent = {
-            intent: geminiData.intent,
-            customer_name: geminiData.customer_name || null,
-            pronoun_used: Boolean(geminiData.pronoun_used),
-            amount_paise: geminiData.amount_paise || null,
-            transaction_date: getTodayDateString(),
-            relative_date_phrase: geminiData.relative_date_phrase || null,
-            item_name: geminiData.item_name || null,
-            item_quantity: geminiData.item_quantity || null,
-            currency: 'INR',
-            confidence: geminiData.confidence || 0.95,
-            source_transcript: cleanText
+      // 1. Fast deterministic rule-based Kirana parser (< 1ms instant resolution)
+      let intent: ParsedVoiceIntent = parseIntentFromTranscript(cleanText, Boolean(pendingDraft))
+
+      // 2. Only consult Gemini API via Gateway if rule parser cannot recognize intent with high confidence
+      if (intent.intent === 'CLARIFY' || intent.confidence < 0.75) {
+        try {
+          const controller = new AbortController()
+          const timer = setTimeout(() => controller.abort(), 2000)
+          const geminiRes = await fetch('/api/voice/intent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ transcript: cleanText, hasPendingDraft: Boolean(pendingDraft) }),
+            signal: controller.signal
+          })
+          clearTimeout(timer)
+          const geminiData = await geminiRes.json()
+          if (geminiData && !geminiData.fallbackToRuleParser && geminiData.intent && geminiData.intent !== 'CLARIFY') {
+            intent = {
+              intent: geminiData.intent,
+              customer_name: geminiData.customer_name || null,
+              pronoun_used: Boolean(geminiData.pronoun_used),
+              amount_paise: geminiData.amount_paise || null,
+              transaction_date: getTodayDateString(),
+              relative_date_phrase: geminiData.relative_date_phrase || null,
+              item_name: geminiData.item_name || null,
+              item_quantity: geminiData.item_quantity || null,
+              currency: 'INR',
+              confidence: geminiData.confidence || 0.95,
+              source_transcript: cleanText
+            }
           }
-        } else {
-          intent = parseIntentFromTranscript(cleanText, Boolean(pendingDraft))
+        } catch {
+          // Keep deterministic intent
         }
-      } catch {
-        intent = parseIntentFromTranscript(cleanText, Boolean(pendingDraft))
       }
 
       const intentMs = Math.round(performance.now() - intentStart)
