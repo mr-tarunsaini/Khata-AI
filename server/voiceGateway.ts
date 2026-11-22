@@ -260,7 +260,7 @@ Transcript: "${transcript}"`
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify(responseJson))
   } catch (err: any) {
-    res.writeHead(500, { 'Content-Type': 'application/json' })
+    res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: err.message, fallbackToRuleParser: true }))
   }
 }
@@ -288,7 +288,7 @@ export async function handleSyncOfflineQueue(_req: IncomingMessage, res: ServerR
       timestamp: new Date().toISOString()
     }))
   } catch (err: any) {
-    res.writeHead(500, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ error: err.message || 'Sync processing failed' }))
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: err.message || 'Sync processing failed', fallback: true }))
   }
 }

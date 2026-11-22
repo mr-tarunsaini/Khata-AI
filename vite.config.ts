@@ -24,28 +24,35 @@ function voiceGatewayPlugin(): Plugin {
           const chunks: Buffer[] = []
           req.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
           req.on('end', async () => {
-            const bodyBuffer = Buffer.concat(chunks)
-            const bodyText = bodyBuffer.toString('utf-8')
+            try {
+              const bodyBuffer = Buffer.concat(chunks)
+              const bodyText = bodyBuffer.toString('utf-8')
 
-            if (req.url?.startsWith('/api/voice/stt/stream')) {
-              return handleGnaniSTT(req, res, bodyBuffer)
-            }
-            if (req.url?.startsWith('/api/voice/tts/synthesize')) {
-              return handleGnaniTTS(req, res, bodyText)
-            }
-            if (req.url?.startsWith('/api/voice/intent')) {
-              return handleGeminiIntent(req, res, bodyText)
-            }
-            if (req.url?.startsWith('/api/voice/sync')) {
-              return handleSyncOfflineQueue(req, res, bodyText)
-            }
+              if (req.url?.startsWith('/api/voice/stt/stream')) {
+                return await handleGnaniSTT(req, res, bodyBuffer)
+              }
+              if (req.url?.startsWith('/api/voice/tts/synthesize')) {
+                return await handleGnaniTTS(req, res, bodyText)
+              }
+              if (req.url?.startsWith('/api/voice/intent')) {
+                return await handleGeminiIntent(req, res, bodyText)
+              }
+              if (req.url?.startsWith('/api/voice/sync')) {
+                return await handleSyncOfflineQueue(req, res, bodyText)
+              }
 
-            res.writeHead(404)
-            res.end()
+              res.writeHead(404)
+              res.end()
+            } catch (innerErr: any) {
+              console.error('Voice gateway request handling error:', innerErr)
+              res.writeHead(200, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: innerErr?.message || 'Gateway error', fallback: true }))
+            }
           })
         } catch (err: any) {
-          res.writeHead(500, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ error: err.message }))
+          console.error('Voice gateway middleware error:', err)
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: err?.message || 'Gateway middleware error', fallback: true }))
         }
       })
     }
