@@ -69,6 +69,10 @@ export class GnaniSpeechProvider implements SpeechProvider {
         const data = await response.json()
         const latencyMs = Math.round(performance.now() - startTime)
 
+        if (data.error && !data.text) {
+          console.warn('Gnani STT notice:', data.error)
+        }
+
         return {
           text: data.text || '',
           language: data.language || input.language,

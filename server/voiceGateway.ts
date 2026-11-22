@@ -59,6 +59,18 @@ export async function handleGnaniSTT(req: IncomingMessage, res: ServerResponse, 
 
     const langCode = (req.headers['x-language'] as string) || 'hi-IN'
 
+    // Gracefully handle empty or minimal audio buffers (< 50 bytes)
+    if (!bodyBuffer || bodyBuffer.length < 50) {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({
+        text: '',
+        language: langCode,
+        confidence: 1,
+        provider: 'Gnani Prisma STT'
+      }))
+      return
+    }
+
     // Call Gnani Prisma STT via Vachana API
     const formData = new FormData()
     const audioBlob = new Blob([bodyBuffer], { type: (req.headers['content-type'] as string) || 'audio/wav' })
@@ -77,7 +89,16 @@ export async function handleGnaniSTT(req: IncomingMessage, res: ServerResponse, 
 
     if (!gnaniRes.ok) {
       const errText = await gnaniRes.text()
-      throw new Error(`Gnani Prisma STT error (${gnaniRes.status}): ${errText}`)
+      console.error(`Gnani Prisma STT error (${gnaniRes.status}):`, errText)
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({
+        text: '',
+        error: `Gnani STT error (${gnaniRes.status}): ${errText}`,
+        language: langCode,
+        confidence: 0,
+        provider: 'Gnani Prisma STT'
+      }))
+      return
     }
 
     const gnaniData: any = await gnaniRes.json()
@@ -89,8 +110,13 @@ export async function handleGnaniSTT(req: IncomingMessage, res: ServerResponse, 
       provider: 'Gnani Prisma STT'
     }))
   } catch (err: any) {
-    res.writeHead(500, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ error: err.message || 'STT processing failed' }))
+    console.error('Gnani STT gateway proxy error:', err)
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({
+      text: '',
+      error: err.message || 'STT processing failed',
+      provider: 'Gnani Prisma STT'
+    }))
   }
 }
 
