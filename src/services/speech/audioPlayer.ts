@@ -12,6 +12,28 @@
 
 class AudioPlayerService {
   private audioContext: AudioContext | null = null
+  private currentSource: AudioBufferSourceNode | null = null
+
+  /**
+   * Stops any currently playing audio immediately to prevent voice overlap
+   */
+  stopAll(): void {
+    if (this.currentSource) {
+      try {
+        this.currentSource.stop()
+      } catch {
+        // ignore
+      }
+      this.currentSource = null
+    }
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      try {
+        window.speechSynthesis.cancel()
+      } catch {
+        // ignore
+      }
+    }
+  }
 
   /**
    * Permanently unlocks Web Audio playback in the active tab during user gesture.
@@ -51,6 +73,8 @@ class AudioPlayerService {
    * Plays an audio ArrayBuffer reliably across all browser environments.
    */
   async playBuffer(arrayBuffer: ArrayBuffer, fallbackText?: string, language: string = 'hi-IN'): Promise<void> {
+    this.stopAll()
+
     // Strategy 1: Web Audio API (Permanent unlock, bypasses 5-second transient activation limit)
     const ctx = this.getAudioContext()
     if (ctx) {
@@ -64,9 +88,15 @@ class AudioPlayerService {
 
         return new Promise<void>((resolve) => {
           const source = ctx.createBufferSource()
+          this.currentSource = source
           source.buffer = audioBuffer
           source.connect(ctx.destination)
-          source.onended = () => resolve()
+          source.onended = () => {
+            if (this.currentSource === source) {
+              this.currentSource = null
+            }
+            resolve()
+          }
           source.start(0)
         })
       } catch (err) {

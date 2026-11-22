@@ -9,8 +9,6 @@ import { PushToTalkButton } from './PushToTalkButton'
 import { AudioWaveform } from './AudioWaveform'
 import { speechRegistry } from '@/services/speech/speechRegistry'
 import { ActiveProviderType } from '@/services/speech/SpeechProvider'
-import { SCRIPTED_DEMO_SCENARIOS, mockSpeechProvider } from '@/services/speech/MockSpeechProvider'
-import { webSpeechProvider } from '@/services/speech/WebSpeechProvider'
 import { audioRecorder } from '@/services/speech/audioRecorder'
 import { audioPlayer } from '@/services/speech/audioPlayer'
 import { parseIntentFromTranscript } from '@/services/parser/intentParser'
@@ -85,8 +83,7 @@ export const VoiceKhataView: React.FC = () => {
   } = useLedger()
   const { isOnline } = usePwa()
 
-  const [providerType, setProviderType] = useState<ActiveProviderType>(speechRegistry.getActiveType())
-  const [selectedMockScenarioId, setSelectedMockScenarioId] = useState<string>('scenario-1')
+  const [providerType] = useState<ActiveProviderType>('gnani')
   const [status, setStatus] = useState<VoiceSessionStatus>('idle')
   const [transcript, setTranscript] = useState<string>('')
   const [interimTranscript, setInterimTranscript] = useState<string>('')
@@ -127,25 +124,8 @@ export const VoiceKhataView: React.FC = () => {
 
   // Listen to provider registry changes
   useEffect(() => {
-    return speechRegistry.subscribe((type) => {
-      setProviderType(type)
-    })
+    speechRegistry.setActiveType('gnani')
   }, [])
-
-  const handleProviderChange = (type: ActiveProviderType) => {
-    speechRegistry.setActiveType(type)
-    setProviderType(type)
-    if (type === 'mock') {
-      mockSpeechProvider.setScenario(selectedMockScenarioId)
-    } else {
-      mockSpeechProvider.clearForcedScenario()
-    }
-  }
-
-  const handleMockScenarioChange = (scenarioId: string) => {
-    setSelectedMockScenarioId(scenarioId)
-    mockSpeechProvider.setScenario(scenarioId)
-  }
 
   // Speak response helper using active provider
   const speakResponse = useCallback(
@@ -598,9 +578,9 @@ export const VoiceKhataView: React.FC = () => {
     ]
   )
 
-  // Start Voice Capture
+  // Start Voice Capture (Gnani AI)
   const handleStartCapture = async () => {
-    if (!isOnline && providerType !== 'mock') {
+    if (!isOnline) {
       setStatus('offline')
       return
     }
@@ -617,27 +597,39 @@ export const VoiceKhataView: React.FC = () => {
     // Unlock Web Audio API on user interaction so subsequent TTS playback is never blocked
     audioPlayer.unlock()
 
-    // Gnani Provider records raw microphone audio while button is held
-    if (providerType === 'gnani') {
-      try {
-        await audioRecorder.startRecording((volume) => setAudioVolume(volume))
-      } catch (e: any) {
-        console.warn('Microphone recording error:', e)
-        setStatus('error')
-        setErrorMessage(e.message || 'Microphone access failed. Please enable mic permissions.')
-      }
-      return
+    try {
+      await audioRecorder.startRecording((volume) => setAudioVolume(volume))
+    } catch (e: any) {
+      console.warn('Microphone recording error:', e)
+      setStatus('error')
+      setErrorMessage(e.message || 'Microphone access failed. Please enable mic permissions.')
     }
+  }
 
-    const provider = speechRegistry.getActiveProvider()
+  // End Voice Capture on button release
+  const handleStopCapture = async () => {
+    if (status !== 'listening') return
 
     try {
+      setStatus('processing')
+      const audioBlob = await audioRecorder.stopRecording()
+      setAudioVolume(0)
+
+      if (abortControllerRef.current?.signal.aborted) {
+        setStatus('idle')
+        return
+      }
+
+      if (!audioBlob || audioBlob.size < 200) {
+        setStatus('idle')
+        return
+      }
+
+      const provider = speechRegistry.getActiveProvider()
       const result = await provider.streamTranscription({
+        audio: audioBlob,
         language: language === 'en' ? 'en-IN' : 'hi-IN',
-        signal: abortControllerRef.current.signal,
-        onPartial: (partial) => {
-          setInterimTranscript(partial)
-        }
+        signal: abortControllerRef.current?.signal
       })
 
       if (result.text) {
@@ -650,58 +642,7 @@ export const VoiceKhataView: React.FC = () => {
         setStatus('idle')
       } else {
         setStatus('error')
-        setErrorMessage(err.message || 'Speech capture failed')
-      }
-    }
-  }
-
-  // End Voice Capture on button release
-  const handleStopCapture = async () => {
-    if (status !== 'listening') return
-
-    if (providerType === 'gnani') {
-      try {
-        setStatus('processing')
-        const audioBlob = await audioRecorder.stopRecording()
-        setAudioVolume(0)
-
-        if (abortControllerRef.current?.signal.aborted) {
-          setStatus('idle')
-          return
-        }
-
-        if (!audioBlob || audioBlob.size < 200) {
-          setStatus('idle')
-          return
-        }
-
-        const provider = speechRegistry.getActiveProvider()
-        const result = await provider.streamTranscription({
-          audio: audioBlob,
-          language: language === 'en' ? 'en-IN' : 'hi-IN',
-          signal: abortControllerRef.current?.signal
-        })
-
-        if (result.text) {
-          processTranscript(result.text, result.latencyMs)
-        } else {
-          setStatus('idle')
-        }
-      } catch (err: any) {
-        if (err.message?.includes('aborted')) {
-          setStatus('idle')
-        } else {
-          setStatus('error')
-          setErrorMessage(err.message || 'Speech recognition failed')
-        }
-      }
-      return
-    }
-
-    if (providerType === 'web-speech') {
-      const provider = speechRegistry.getActiveProvider()
-      if (provider.stop) {
-        provider.stop()
+        setErrorMessage(err.message || 'Speech recognition failed')
       }
     }
   }
@@ -712,11 +653,8 @@ export const VoiceKhataView: React.FC = () => {
       abortControllerRef.current = null
     }
     audioRecorder.abortRecording()
+    audioPlayer.stopAll()
     setAudioVolume(0)
-    const provider = speechRegistry.getActiveProvider()
-    if (provider.stop) {
-      provider.stop()
-    }
     sessionMemory.clear()
     setSessionActiveName(null)
     setStatus('idle')
@@ -757,39 +695,10 @@ export const VoiceKhataView: React.FC = () => {
           </p>
         </div>
 
-        {/* 3-Way Speech Provider Switcher */}
-        <div className="flex items-center gap-1 bg-[#F8F7F2] p-1 rounded-xl border border-[#E3E5E0] text-xs font-semibold self-stretch sm:self-auto">
-          <button
-            onClick={() => handleProviderChange('mock')}
-            className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
-              providerType === 'mock'
-                ? 'bg-white text-[#253B73] shadow-xs'
-                : 'text-[#667085] hover:text-[#17233B]'
-            }`}
-          >
-            Demo Mock
-          </button>
-          <button
-            onClick={() => handleProviderChange('web-speech')}
-            className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
-              providerType === 'web-speech'
-                ? 'bg-[#087F6E] text-white shadow-xs'
-                : 'text-[#667085] hover:text-[#17233B]'
-            }`}
-          >
-            Live Mic
-          </button>
-          <button
-            onClick={() => handleProviderChange('gnani')}
-            className={`px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
-              providerType === 'gnani'
-                ? 'bg-[#253B73] text-white shadow-xs'
-                : 'text-[#667085] hover:text-[#17233B]'
-            }`}
-          >
-            <span>Gnani AI</span>
-            <span className="w-1.5 h-1.5 rounded-full bg-[#087F6E]"></span>
-          </button>
+        {/* Active Speech Engine Badge (Gnani AI) */}
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#087F6E]/10 border border-[#087F6E]/20 text-xs font-bold text-[#087F6E] shrink-0 self-start sm:self-auto">
+          <span className="w-2 h-2 rounded-full bg-[#087F6E] animate-pulse"></span>
+          <span>Gnani AI (STT + TTS)</span>
         </div>
       </div>
 
@@ -821,33 +730,6 @@ export const VoiceKhataView: React.FC = () => {
           </button>
         )}
       </div>
-
-      {/* Scripted Scenario Picker (Active when Mock Provider is selected) */}
-      {providerType === 'mock' && (
-        <div className="bg-amber-50/70 rounded-2xl p-4 border border-amber-200 shadow-xs space-y-2 animate-fade-in">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-amber-700" />
-              डेमो मूल्यांकन परिदृश्य (Judge Scenario):
-            </span>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 uppercase">
-              Repeatable Testing
-            </span>
-          </div>
-
-          <select
-            value={selectedMockScenarioId}
-            onChange={(e) => handleMockScenarioChange(e.target.value)}
-            className="w-full px-3 py-2 text-xs font-semibold bg-white border border-amber-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#253B73] cursor-pointer"
-          >
-            {SCRIPTED_DEMO_SCENARIOS.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label} — {s.description}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
 
       {/* Hero Push-To-Talk Microphone Section */}
       <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#E3E5E0] shadow-md flex flex-col items-center justify-center text-center relative overflow-hidden">

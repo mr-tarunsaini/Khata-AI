@@ -40,19 +40,37 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
     { id: 'settings', label: t.navSettings, icon: Settings }
   ]
 
+  React.useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden'
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape' && onClose) {
+          onClose()
+        }
+      }
+      window.addEventListener('keydown', handleKeyDown)
+      return () => {
+        document.body.style.overflow = ''
+        window.removeEventListener('keydown', handleKeyDown)
+      }
+    } else {
+      document.body.style.overflow = ''
+    }
+  }, [isOpen, onClose])
+
   const sidebarContent = (
-    <div className="flex flex-col h-full bg-[#FFFFFF] border-r border-[#E3E5E0] w-64 select-none">
+    <div className="flex flex-col h-full bg-[#FFFFFF] border-r border-[#E3E5E0] w-full select-none">
       {/* Top Header inside sidebar */}
       <div className="p-4 border-b border-[#E3E5E0] flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-[#253B73] flex items-center justify-center text-white font-bold text-sm">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-2">
+          <div className="w-9 h-9 rounded-xl bg-[#253B73] flex items-center justify-center text-white font-bold text-sm shrink-0 shadow-xs">
             K
           </div>
-          <div>
-            <h2 className="text-sm font-bold text-[#17233B] truncate max-w-[140px]">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-sm font-bold text-[#17233B] truncate">
               {shop?.name || 'KhataAI'}
             </h2>
-            <p className="text-[11px] text-[#087F6E] font-medium">
+            <p className="text-[11px] text-[#087F6E] font-medium leading-tight">
               {user?.role === 'OWNER' ? 'Shop Owner' : 'Staff'}
             </p>
           </div>
@@ -61,7 +79,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
         {onClose && (
           <button
             onClick={onClose}
-            className="lg:hidden p-1.5 rounded-lg text-[#667085] hover:bg-slate-100"
+            className="lg:hidden p-2 rounded-xl text-[#667085] hover:text-[#17233B] hover:bg-slate-100 transition cursor-pointer"
+            aria-label="Close sidebar"
           >
             <X className="w-5 h-5" />
           </button>
@@ -143,7 +162,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
   return (
     <>
       {/* Desktop Persistent Fixed Sidebar */}
-      <aside className="hidden lg:block shrink-0 h-full">
+      <aside className="hidden lg:block shrink-0 h-full w-64">
         {sidebarContent}
       </aside>
 
@@ -151,10 +170,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
       {isOpen && (
         <div className="fixed inset-0 z-50 lg:hidden flex">
           <div
-            className="fixed inset-0 bg-black/40 backdrop-blur-xs transition-opacity"
+            className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity duration-300"
             onClick={onClose}
+            aria-hidden="true"
           />
-          <div className="relative flex-1 flex flex-col max-w-xs w-full bg-white z-10 animate-slide-right">
+          <div className="relative flex-1 flex flex-col max-w-[280px] sm:max-w-xs w-full bg-white z-10 shadow-2xl transition-transform duration-300">
             {sidebarContent}
           </div>
         </div>

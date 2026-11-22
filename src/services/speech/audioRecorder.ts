@@ -93,8 +93,10 @@ export class AudioRecorder {
 
     this.pcmChunks = []
 
-    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext
-    this.audioContext = new AudioContextClass({ sampleRate: 16000 })
+    if (!this.audioContext || this.audioContext.state === 'closed') {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext
+      this.audioContext = new AudioContextClass({ sampleRate: 16000 })
+    }
 
     if (this.audioContext.state === 'suspended') {
       await this.audioContext.resume()
@@ -162,13 +164,12 @@ export class AudioRecorder {
 
     const sampleRate = this.audioContext?.sampleRate || 16000
 
-    if (this.audioContext && this.audioContext.state !== 'closed') {
+    if (this.audioContext && this.audioContext.state === 'running') {
       try {
-        await this.audioContext.close()
+        await this.audioContext.suspend()
       } catch {
         // ignore
       }
-      this.audioContext = null
     }
 
     this.cleanup()

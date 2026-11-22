@@ -99,6 +99,7 @@ export const PushToTalkButton: React.FC<PushToTalkButtonProps> = ({
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
+        onPointerCancel={handlePointerUp}
         onContextMenu={(e) => e.preventDefault()}
         disabled={disabled}
         aria-label="Push to talk microphone button"
