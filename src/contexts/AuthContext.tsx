@@ -9,6 +9,7 @@ interface AuthContextType {
   shop: Shop | null
   isAuthenticated: boolean
   isDemoMode: boolean
+  isDemoAccount: boolean
   isLoading: boolean
   login: (email: string, password?: string) => Promise<void>
   signup: (shopName: string, ownerName: string, email: string, password?: string) => Promise<void>
@@ -71,6 +72,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   })
 
   const [isLoading, setIsLoading] = useState<boolean>(true)
+
+  const isDemoAccount = Boolean(
+    shop?.id === DEMO_SHOP.id ||
+    user?.id === 'usr-demo-owner' ||
+    (shop?.name === 'Sharma Kirana Store' && user?.full_name === 'Rajesh Sharma')
+  )
 
   // Persist session changes to localStorage
   const saveSession = (nextUser: UserProfile | null, nextShop: Shop | null) => {
@@ -180,7 +187,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       // 1. Check if user is logging into the pre-populated Dummy Test Account
       if (isDummyCredentials(normalizedEmail)) {
-        // If Supabase is active, try signing into Supabase first
         if (isSupabaseConfigured && supabase && password) {
           const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
             email: normalizedEmail,
@@ -188,7 +194,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           })
 
           if (!authError && authData.user) {
-            // Attempt to load profile from database
             const { data: profileData } = await supabase
               .from('profiles')
               .select('*, shops(*)')
@@ -277,14 +282,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
       } else {
-        // Offline / Demo fallback
+        // Offline / Local user login
         const offlineShop: Shop = {
-          ...DEMO_SHOP,
-          owner_name: email.split('@')[0] || 'Shopkeeper'
+          id: `shop-${Date.now()}`,
+          name: `${email.split('@')[0]} Kirana Store`,
+          owner_name: email.split('@')[0] || 'Shopkeeper',
+          timezone: 'Asia/Kolkata',
+          default_language: 'hi',
+          created_at: new Date().toISOString()
         }
         const offlineUser: UserProfile = {
-          ...DEMO_USER,
-          full_name: email.split('@')[0] || 'Shopkeeper'
+          id: `usr-${Date.now()}`,
+          shop_id: offlineShop.id,
+          role: 'OWNER',
+          full_name: email.split('@')[0] || 'Shopkeeper',
+          created_at: new Date().toISOString()
         }
         saveSession(offlineUser, offlineShop)
       }
@@ -298,6 +310,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const normalizedEmail = email.trim().toLowerCase()
 
     try {
+      // Clear any old local demo data so new user starts completely empty
+      await localDb.clear('customers').catch(() => {})
+      await localDb.clear('transactions').catch(() => {})
+
       if (isSupabaseConfigured && supabase && password) {
         // 1. Supabase Auth signup
         const { data: authData, error: authError } = await supabase.auth.signUp({
@@ -313,7 +329,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (authError) {
           if (authError.message.includes('rate limit')) {
-            // When Supabase email rate limit is hit, gracefully activate account with local store state
             console.warn('Supabase email rate limit encountered. Activating store locally.')
             const localShop: Shop = {
               id: `shop-${Date.now()}`,
@@ -331,7 +346,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               created_at: new Date().toISOString()
             }
             saveSession(localUser, localShop)
-            await localDb.initializeDemoDataIfEmpty()
             return
           }
           throw new Error(authError.message)
@@ -340,7 +354,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (authData.user) {
           const userId = authData.user.id
 
-          // Check if auto-provisioning trigger already created the profile
+          // Check if auto-provisioning trigger created the profile
           const { data: existingProfile } = await supabase
             .from('profiles')
             .select('*, shops(*)')
@@ -360,7 +374,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return
           }
 
-          // If trigger did not create it, try inserting shop & profile directly
+          // If trigger did not create it, insert shop & profile directly
           let shopRecord: Shop | null = null
           try {
             const { data: createdShop } = await supabase
@@ -408,7 +422,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
 
           saveSession(newUser, resolvedShop)
-          await localDb.initializeDemoDataIfEmpty()
         }
       } else {
         // Offline / Local Mode signup
@@ -428,7 +441,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           created_at: new Date().toISOString()
         }
         saveSession(newUser, newShop)
-        await localDb.initializeDemoDataIfEmpty()
       }
     } finally {
       setIsLoading(false)
@@ -461,6 +473,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         shop,
         isAuthenticated: !!user && !!shop,
         isDemoMode: isDemo,
+        isDemoAccount,
         isLoading,
         login,
         signup,

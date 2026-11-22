@@ -30,11 +30,17 @@ interface LedgerContextType {
 const LedgerContext = createContext<LedgerContextType | undefined>(undefined)
 
 export const LedgerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { shop, isAuthenticated } = useAuth()
+  const { shop, isAuthenticated, isDemoAccount } = useAuth()
   const activeShopId = shop?.id || DEMO_SHOP.id
 
-  const [customers, setCustomers] = useState<Customer[]>(INITIAL_DEMO_CUSTOMERS)
-  const [transactions, setTransactions] = useState<LedgerTransaction[]>(INITIAL_DEMO_TRANSACTIONS)
+  const [customers, setCustomers] = useState<Customer[]>(() => {
+    if (isDemoAccount) return INITIAL_DEMO_CUSTOMERS
+    return []
+  })
+  const [transactions, setTransactions] = useState<LedgerTransaction[]>(() => {
+    if (isDemoAccount) return INITIAL_DEMO_TRANSACTIONS
+    return []
+  })
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState<boolean>(true)
 
@@ -45,54 +51,52 @@ export const LedgerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const loadData = async () => {
       setIsLoading(true)
       try {
-        // 1. If Supabase is configured and authenticated, attempt fetching live cloud ledger
-        if (isSupabaseConfigured && supabase && isAuthenticated && shop) {
-          try {
-            const { data: cloudCustomers } = await supabase
-              .from('customers')
-              .select('*')
-              .eq('shop_id', shop.id)
+        if (isDemoAccount) {
+          // Pre-loaded Demo Account (Sharma Kirana Store)
+          await localDb.initializeDemoDataIfEmpty()
+          const cachedCustomers = await localDb.getAll<Customer>('customers')
+          const cachedTx = await localDb.getAll<LedgerTransaction>('transactions')
 
-            const { data: cloudTx } = await supabase
-              .from('ledger_transactions')
-              .select('*')
-              .eq('shop_id', shop.id)
-              .order('effective_date', { ascending: false })
+          if (mounted) {
+            setCustomers(cachedCustomers && cachedCustomers.length > 0 ? cachedCustomers : INITIAL_DEMO_CUSTOMERS)
+            setTransactions(cachedTx && cachedTx.length > 0 ? cachedTx : INITIAL_DEMO_TRANSACTIONS)
+          }
+        } else {
+          // Real User / Newly Created Shop: Clean data, no dummy customers
+          if (isSupabaseConfigured && supabase && isAuthenticated && shop) {
+            try {
+              const { data: cloudCustomers } = await supabase
+                .from('customers')
+                .select('*')
+                .eq('shop_id', shop.id)
+                .is('archived_at', null)
 
-            if (cloudCustomers && cloudCustomers.length > 0 && mounted) {
-              setCustomers(cloudCustomers)
-              for (const c of cloudCustomers) {
-                await localDb.put('customers', c).catch(() => {})
+              const { data: cloudTx } = await supabase
+                .from('ledger_transactions')
+                .select('*')
+                .eq('shop_id', shop.id)
+                .order('effective_date', { ascending: false })
+
+              if (mounted) {
+                setCustomers(cloudCustomers || [])
+                setTransactions(cloudTx || [])
               }
-            }
-
-            if (cloudTx && cloudTx.length > 0 && mounted) {
-              setTransactions(cloudTx)
-              for (const tx of cloudTx) {
-                await localDb.put('transactions', tx).catch(() => {})
-              }
-            }
-
-            if (cloudCustomers && cloudCustomers.length > 0) {
               if (mounted) setIsLoading(false)
               return
+            } catch (cloudErr) {
+              console.warn('Cloud ledger fetch error, falling back to local storage:', cloudErr)
             }
-          } catch (cloudErr) {
-            console.warn('Cloud ledger fetch error, falling back to local storage:', cloudErr)
           }
-        }
 
-        // 2. Load from encrypted IndexedDB cache
-        await localDb.initializeDemoDataIfEmpty()
-        const cachedCustomers = await localDb.getAll<Customer>('customers')
-        const cachedTx = await localDb.getAll<LedgerTransaction>('transactions')
+          // Offline / Local storage scoped to this shop only
+          const cachedCustomers = await localDb.getAll<Customer>('customers')
+          const cachedTx = await localDb.getAll<LedgerTransaction>('transactions')
 
-        if (mounted) {
-          if (cachedCustomers && cachedCustomers.length > 0) {
-            setCustomers(cachedCustomers)
-          }
-          if (cachedTx && cachedTx.length > 0) {
-            setTransactions(cachedTx)
+          if (mounted) {
+            const filteredCust = cachedCustomers.filter((c) => c.shop_id === activeShopId && !c.archived_at)
+            const filteredTx = cachedTx.filter((t) => t.shop_id === activeShopId)
+            setCustomers(filteredCust)
+            setTransactions(filteredTx)
           }
         }
       } catch (e) {
@@ -107,7 +111,7 @@ export const LedgerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return () => {
       mounted = false
     }
-  }, [shop?.id, isAuthenticated])
+  }, [shop?.id, isAuthenticated, isDemoAccount, activeShopId])
 
   // Calculate customer balances deterministically
   const customerBalances = useMemo(() => {
@@ -330,11 +334,18 @@ export const LedgerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   )
 
   const resetDemoData = useCallback(async () => {
-    await localDb.resetDemoData()
-    setCustomers(INITIAL_DEMO_CUSTOMERS)
-    setTransactions(INITIAL_DEMO_TRANSACTIONS)
+    if (isDemoAccount) {
+      await localDb.resetDemoData()
+      setCustomers(INITIAL_DEMO_CUSTOMERS)
+      setTransactions(INITIAL_DEMO_TRANSACTIONS)
+    } else {
+      await localDb.clear('customers').catch(() => {})
+      await localDb.clear('transactions').catch(() => {})
+      setCustomers([])
+      setTransactions([])
+    }
     setSelectedCustomerId(null)
-  }, [])
+  }, [isDemoAccount])
 
   // Export Chronological Ledger to CSV
   const exportLedgerCsv = useCallback(() => {

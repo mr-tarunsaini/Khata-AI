@@ -206,15 +206,6 @@ BEGIN
   VALUES (new.id, new_shop_id, 'OWNER', owner_name_input)
   ON CONFLICT (id) DO NOTHING;
 
-  -- Seed initial starter customers
-  INSERT INTO public.customers (shop_id, display_name, normalized_name, notes)
-  VALUES
-    (new_shop_id, 'Ramesh Kumar', 'ramesh kumar', 'Regular customer, milk and ration'),
-    (new_shop_id, 'Suresh Patel', 'suresh patel', 'Weekly bulk grocery'),
-    (new_shop_id, 'Geeta Devi', 'geeta devi', 'Monthly settlement'),
-    (new_shop_id, 'Anil Gupta', 'anil gupta', 'Local resident'),
-    (new_shop_id, 'Pooja Verma', 'pooja verma', 'Snacks and dairy');
-
   RETURN new;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

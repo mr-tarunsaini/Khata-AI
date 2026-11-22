@@ -26,7 +26,7 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, onClose }) => {
   const { t } = useLanguage()
   const { user, shop, logout } = useAuth()
-  const { todayAggregates, totalOutstandingPaise } = useLedger()
+  const { todayAggregates } = useLedger()
 
   const navItems = [
     { id: 'dashboard', label: t.navDashboard, icon: LayoutDashboard },
@@ -39,7 +39,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
   const sidebarContent = (
     <div className="flex flex-col h-full bg-[#FFFFFF] border-r border-[#E3E5E0] w-64 select-none">
       {/* Top Header inside sidebar */}
-      <div className="p-4 border-b border-[#E3E5E0] flex items-center justify-between">
+      <div className="p-4 border-b border-[#E3E5E0] flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-lg bg-[#253B73] flex items-center justify-center text-white font-bold text-sm">
             खा
@@ -104,7 +104,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
       </nav>
 
       {/* Mini Financial Summary Card */}
-      <div className="p-3 m-3 rounded-xl bg-[#F8F7F2] border border-[#E3E5E0]">
+      <div className="p-3 m-3 rounded-xl bg-[#F8F7F2] border border-[#E3E5E0] shrink-0">
         <div className="flex items-center justify-between mb-2">
           <span className="text-[11px] font-semibold text-[#667085] uppercase tracking-wider">
             {t.today}
@@ -124,7 +124,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
       </div>
 
       {/* Footer / Logout */}
-      <div className="p-3 border-t border-[#E3E5E0]">
+      <div className="p-3 border-t border-[#E3E5E0] shrink-0">
         <button
           onClick={logout}
           className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold text-[#B42318] hover:bg-red-50 transition cursor-pointer"
@@ -138,8 +138,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
 
   return (
     <>
-      {/* Desktop Persistent Sidebar */}
-      <aside className="hidden lg:block shrink-0 h-screen sticky top-0">
+      {/* Desktop Persistent Fixed Sidebar */}
+      <aside className="hidden lg:block shrink-0 h-full">
         {sidebarContent}
       </aside>
 

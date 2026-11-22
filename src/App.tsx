@@ -1,12 +1,11 @@
 import React, { useState } from 'react'
-import { LanguageProvider, useLanguage } from '@/contexts/LanguageContext'
+import { LanguageProvider } from '@/contexts/LanguageContext'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import { PwaProvider } from '@/contexts/PwaContext'
 import { LedgerProvider, useLedger } from '@/contexts/LedgerContext'
 import { Navbar } from '@/components/common/Navbar'
 import { Sidebar, ActiveTab } from '@/components/common/Sidebar'
 import { BottomNav } from '@/components/common/BottomNav'
-import { DemoModeBanner } from '@/components/common/DemoModeBanner'
 import { AIDisclosureModal } from '@/components/common/AIDisclosureModal'
 import { LandingPage } from '@/components/landing/LandingPage'
 import { DashboardView } from '@/components/dashboard/DashboardView'
@@ -21,7 +20,6 @@ const MainAppContent: React.FC = () => {
   const { selectedCustomerId, setSelectedCustomerId } = useLedger()
 
   const [showLanding, setShowLanding] = useState<boolean>(() => {
-    // If user has visited before or opened specific tab, skip landing
     if (typeof window !== 'undefined') {
       return !localStorage.getItem('khata_ai_visited')
     }
@@ -30,11 +28,6 @@ const MainAppContent: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard')
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
-
-  // Quick scenario runner from DemoModeBanner
-  const handleSelectScenario = (transcriptText: string) => {
-    setActiveTab('voice')
-  }
 
   // If showing landing page
   if (showLanding) {
@@ -55,19 +48,16 @@ const MainAppContent: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#F8F7F2] flex flex-col antialiased">
+    <div className="h-screen bg-[#F8F7F2] flex flex-col antialiased overflow-hidden">
       {/* 1. First-Turn AI Disclosure Modal (in Hindi/Hinglish) */}
       <AIDisclosureModal />
 
-      {/* 2. Top Header Navbar */}
+      {/* 2. Top Header Navbar (Fixed Height) */}
       <Navbar onToggleSidebar={() => setIsSidebarOpen(true)} />
 
-      {/* 3. Demo Mode Banner with Quick Scenario Prompts */}
-      <DemoModeBanner onSelectScenario={handleSelectScenario} />
-
-      {/* 4. App Body: Desktop Sidebar + Main Content Container */}
+      {/* 3. App Body: Desktop Fixed Sidebar + Main Scrollable Area */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Persistent Desktop Sidebar / Mobile Drawer */}
+        {/* Persistent Desktop Fixed Sidebar / Mobile Drawer */}
         <Sidebar
           activeTab={activeTab}
           setActiveTab={setActiveTab}
@@ -75,8 +65,8 @@ const MainAppContent: React.FC = () => {
           onClose={() => setIsSidebarOpen(false)}
         />
 
-        {/* Dynamic Center Main Content Area */}
-        <main className="flex-1 overflow-y-auto pb-24 lg:pb-12">
+        {/* Dynamic Center Main Content Area (Independent scroll container) */}
+        <main className="flex-1 overflow-y-auto pb-24 lg:pb-8">
           {activeTab === 'dashboard' && (
             <DashboardView
               onOpenVoice={() => setActiveTab('voice')}
@@ -105,7 +95,7 @@ const MainAppContent: React.FC = () => {
         </main>
       </div>
 
-      {/* 5. Mobile Bottom Navigation Bar with Hero Voice Mic */}
+      {/* 4. Mobile Bottom Navigation Bar with Hero Voice Mic */}
       <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
     </div>
   )
