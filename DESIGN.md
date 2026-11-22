@@ -1,16 +1,16 @@
-# Design System — KhataAI
+# Design System — KhataAI (Advanced Edition)
 
 ## Product personality
 Trustworthy, calm, practical, local, and fast. The interface should feel like a reliable digital khata book—not a complex banking dashboard or a flashy AI chatbot.
 
 ## Visual direction
-- Background: warm ivory/off-white.
-- Primary: deep indigo/navy.
-- Action: emerald/teal.
-- Accent: saffron/orange, used sparingly for attention.
-- Success: accessible green.
-- Warning: amber.
-- Error: red with clear text, never color alone.
+- Background: warm ivory/off-white (`#F8F7F2`).
+- Primary: deep indigo/navy (`#253B73`).
+- Action: emerald/teal (`#087F6E`).
+- Accent: saffron/orange (`#E7A23B`), used sparingly for attention.
+- Success: accessible green (`#16794B`).
+- Warning: amber (`#A86408`).
+- Error: red (`#B42318`) with clear text, never color alone.
 
 Suggested tokens:
 ```css
@@ -34,93 +34,60 @@ Suggested tokens:
 ```
 
 ## Typography
-- Use a highly legible sans-serif with Devanagari coverage (e.g. Noto Sans / Noto Sans Devanagari).
-- Large numerals for balances.
-- Avoid thin font weights.
-- Support system font scaling.
+- Highly legible sans-serif with Noto Sans & Noto Sans Devanagari font fallback.
+- Large numerals for balances with ₹ symbol.
+- High contrast, avoiding thin weights.
 
 ## Platform and responsive strategy
-Build one responsive website that can also be installed as a PWA. Desktop, tablet and mobile share the same information architecture; only layout density and navigation adapt. Do not hide core ledger functions on desktop.
+- Responsive web application + installable Progressive Web App (PWA).
+- Desktop: **Stationary Fixed Left Sidebar**; central `<main>` area scrolls independently.
+- Mobile: Compact top bar, hero push-to-talk button, and bottom navigation bar.
 
-## Layout
-### Mobile voice home
-1. Top bar: KhataAI logo, shop name, connectivity status.
-2. Greeting/status: short text in selected language.
-3. Main mic control: large circular or rounded-square push-to-talk button.
-4. Listening/processing visual: waveform or animated bars, plus text label.
-5. Live transcript card.
-6. Last transaction confirmation card.
-7. Today's summary: credit, payments, outstanding.
-8. Bottom navigation: Home, Customers, History, Settings.
+## Advanced Feature Component Designs
 
-### Desktop (responsive website)
-- Persistent left navigation rail.
-- Main voice action and recent activity in the central column.
-- Summary cards and quick customer lookup in a right-side column where space allows.
-- Full customer and transaction management views.
+### 1. Multi-Turn Session Memory Feedback
+- When pronouns (`usne`, `inka`) are bound, an active session pill appears:
+  `[ 👤 रमेश कुमार (सत्र सक्रिय) • 60s ]`
+- Provides instant visual confirmation of who the conversation is referring to.
 
-### Tablet
-- Collapsible navigation or compact top navigation.
-- Adaptive two-column layout; stack cards when width is constrained.
+### 2. Customer Aliases UI (`CustomersView`)
+- Displays badges under customer name: e.g. `[मास्टर जी]`, `[दुकानदार]`, `[नुकड़ वाले]`.
+- Inline quick-add tag input for new aliases.
 
-### PWA/mobile
-- Installable PWA with app-like shell and compact bottom navigation.
-- Main voice workflow remains one-handed and prominent.
-- Maintain mobile-first hierarchy.
+### 3. Voice Customer Creation Banner
+- When an unknown name is spoken:
+  - App displays a soft saffron prompt: *"रमेश शर्मा नए ग्राहक हैं। क्या नया खाता खोलें?"*
+  - Dual action: Spoken "हाँ" or single-tap `[ ✅ नया खाता बनाएं ]` / `[ ❌ रद्द करें ]`.
 
-## Voice control states
-- Idle: “बोलने के लिए दबाकर रखें” / equivalent localized hint.
-- Listening: clear active ring and waveform; “सुन रहा हूँ…”
-- Processing: progress indicator; “समझ रहा हूँ…”
-- Clarification: highlighted question with one-tap fallback options.
-- Saving: “खाते में दर्ज कर रहा हूँ…”
-- Success: green check and spoken confirmation.
-- Error: plain-language explanation and retry.
-- Offline: persistent banner and explicit sync status.
+### 4. Daily Closing Report View (`DailyClosingModal`)
+- Metric cards:
+  - आज का कुल उधार (Credit Extended)
+  - आज की कुल वसूली (Payments Collected)
+  - आज का नेट बकाया (Net Ledger Delta)
+  - सक्रिय ग्राहक (Active Customers)
+- Top 3 transactions list + Spoken overview button + Export PDF button.
 
-Do not rely on color or animation alone to communicate state.
+### 5. AI Business Analytics Panel (`AnalyticsView`)
+- Debt Aging Buckets:
+  - 🟢 0–7 दिन (Recent: 100% normal)
+  - 🟡 8–15 दिन (Follow-up due)
+  - 🟠 16–30 दिन (Overdue alert)
+  - 🔴 30+ दिन (High risk debtors)
+- Collection Efficiency Gauge (वसूली दर %): `Payments / Credits`.
+- Top 5 Credit Customers (उधार सांद्रता).
 
-## Components
-- `PushToTalkButton`
-- `VoiceSessionStatus`
-- `LiveTranscript`
-- `IntentPreview`
-- `ClarificationPrompt`
-- `BalanceSummaryCard`
-- `CustomerListItem`
-- `LedgerTransactionRow`
-- `DailyTotalsCard`
-- `ConnectivityBadge`
-- `LanguageSelector`
-- `PrivacySettings`
+### 6. PDF Transaction Slip Design
+- Clean 80mm thermal-friendly or A4 formatted digital slip:
+  - Header: Shop Name, Address, Owner Name, Date & Time.
+  - Body: Customer Name, Transaction ID, Type (उधार / जमा), Amount.
+  - Summary: Previous Balance, Current Transaction, Updated Outstanding Balance.
+  - Footer: "खाताAI द्वारा प्रमाणित डिजिटल पर्ची".
 
-## Interaction rules
-- Minimum 48px touch target; mic target ideally 88–112px.
-- Push-to-talk must work with pointer, touch, and keyboard.
-- Release ends capture; cancel gesture/action cancels safely.
-- Provide clear permission instructions.
-- Avoid unnecessary modals.
-- Use short confirmations; no long chatbot bubbles.
-- Make customer balance and transaction direction visually distinct.
-- Confirm destructive actions such as deleting a customer or clearing demo data.
+### 7. Instant Undo Toast
+- Appears floating at the bottom after transaction creation:
+  `[ ↺ ₹340 उधार दर्ज हुआ • वापस लें (Undo) • 5s ]`
+- Clicking initiates an auditable reversal transaction without deleting history.
 
-## Responsive and accessibility
-- Test widths 320px, 360px, 390px, 768px, 1024px.
-- Contrast should meet WCAG AA where practical.
-- Use semantic buttons and labels.
-- Respect `prefers-reduced-motion`.
-- Keep controls usable with screen readers and keyboard.
-- Avoid tiny tables; use stacked cards on narrow screens.
-
-## Brand copy
-Product: **KhataAI**
-Tagline: **Bolo. Likho. Hisaab Jaano.**
-English support line: **Speak naturally. Keep every khata accurate.**
-
-
-## Hindi/Hinglish content direction
-- Hindi/Hinglish is the default first-run language.
-- Use short, natural shop-counter phrases rather than formal translations.
-- Provide Devanagari and Latin-script-friendly font fallback.
-- Keep amounts and customer names visually prominent.
-- Avoid overly technical English in shopkeeper-facing messages; technical settings can use English where appropriate.
+### 8. Optional Inventory Module UI
+- Accessible via Settings toggle: "इन्वेंट्री प्रबंधन सक्षम करें".
+- Cards show Item Name, Stock Level (units/kg), Low Stock Warning Badge (`अल्प स्टॉक`), and voice restock trigger.

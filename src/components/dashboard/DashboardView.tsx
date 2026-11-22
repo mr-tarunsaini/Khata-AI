@@ -1,8 +1,11 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { useAuth } from '@/contexts/AuthContext'
 import { useLedger } from '@/contexts/LedgerContext'
 import { formatINR } from '@/lib/money'
 import { formatFriendlyDate, formatTime } from '@/lib/dates'
+import { DailyClosingModal } from '@/components/reports/DailyClosingModal'
+import { AnalyticsModal } from '@/components/analytics/AnalyticsModal'
 import {
   TrendingDown,
   TrendingUp,
@@ -12,7 +15,9 @@ import {
   ArrowRight,
   Clock,
   Sparkles,
-  Receipt
+  Receipt,
+  PieChart,
+  FileSpreadsheet
 } from 'lucide-react'
 
 interface DashboardViewProps {
@@ -29,6 +34,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onSelectCustomer
 }) => {
   const { t, language } = useLanguage()
+  const { shop } = useAuth()
   const {
     customers,
     transactions,
@@ -36,6 +42,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     totalOutstandingPaise,
     todayAggregates
   } = useLedger()
+
+  const [isClosingOpen, setIsClosingOpen] = useState(false)
+  const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false)
 
   // Top outstanding debtors (positive balance)
   const topDebtors = Array.from(customerBalances.values())
@@ -74,6 +83,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span className="text-xs text-emerald-100 block">आवाज़ से लिखें</span>
             <span className="text-base font-extrabold">{t.navVoiceKhata}</span>
           </div>
+        </button>
+      </div>
+
+      {/* Quick Action Reports & Analytics Bar */}
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          onClick={() => setIsClosingOpen(true)}
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white border border-[#E3E5E0] hover:border-[#087F6E] hover:shadow-xs transition text-xs font-bold text-[#17233B] cursor-pointer"
+        >
+          <FileSpreadsheet className="w-4 h-4 text-[#087F6E]" />
+          <span>दैनिक रोकड़ सारांश (Daily Closing Report)</span>
+        </button>
+
+        <button
+          onClick={() => setIsAnalyticsOpen(true)}
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white border border-[#E3E5E0] hover:border-[#253B73] hover:shadow-xs transition text-xs font-bold text-[#17233B] cursor-pointer"
+        >
+          <PieChart className="w-4 h-4 text-[#253B73]" />
+          <span>खाता एनालिटिक्स (Deterministic Analytics)</span>
         </button>
       </div>
 
@@ -297,6 +325,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Daily Closing Modal */}
+      <DailyClosingModal
+        isOpen={isClosingOpen}
+        onClose={() => setIsClosingOpen(false)}
+        transactions={transactions}
+        customers={customers}
+        shop={shop}
+      />
+
+      {/* Analytics Modal */}
+      <AnalyticsModal
+        isOpen={isAnalyticsOpen}
+        onClose={() => setIsAnalyticsOpen(false)}
+        transactions={transactions}
+        customers={customers}
+      />
     </div>
   )
 }

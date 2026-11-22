@@ -11,10 +11,11 @@ import {
   Settings,
   LogOut,
   TrendingUp,
+  Boxes,
   X
 } from 'lucide-react'
 
-export type ActiveTab = 'dashboard' | 'voice' | 'customers' | 'transactions' | 'settings'
+export type ActiveTab = 'dashboard' | 'voice' | 'customers' | 'transactions' | 'inventory' | 'settings'
 
 interface SidebarProps {
   activeTab: ActiveTab
@@ -26,13 +27,16 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, onClose }) => {
   const { t } = useLanguage()
   const { user, shop, logout } = useAuth()
-  const { todayAggregates } = useLedger()
+  const { todayAggregates, isInventoryEnabled } = useLedger()
 
   const navItems = [
     { id: 'dashboard', label: t.navDashboard, icon: LayoutDashboard },
     { id: 'voice', label: t.navVoiceKhata, icon: Mic, isHero: true },
     { id: 'customers', label: t.navCustomers, icon: Users },
     { id: 'transactions', label: t.navTransactions, icon: Receipt },
+    ...(isInventoryEnabled
+      ? [{ id: 'inventory', label: 'इन्वेंट्री (Stock)', icon: Boxes }]
+      : []),
     { id: 'settings', label: t.navSettings, icon: Settings }
   ]
 

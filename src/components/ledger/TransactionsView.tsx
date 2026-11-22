@@ -1,8 +1,11 @@
 import React, { useState, useMemo } from 'react'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { useAuth } from '@/contexts/AuthContext'
 import { useLedger } from '@/contexts/LedgerContext'
 import { formatINR } from '@/lib/money'
 import { formatFriendlyDate, formatTime, getTodayDateString, getRelativeDateString } from '@/lib/dates'
+import { PdfReceiptService } from '@/services/receipt/pdfReceiptService'
+import { DailyClosingModal } from '@/components/reports/DailyClosingModal'
 import {
   Receipt,
   Search,
@@ -12,16 +15,20 @@ import {
   RotateCcw,
   Download,
   Calendar,
-  Sparkles
+  Sparkles,
+  Printer,
+  FileSpreadsheet
 } from 'lucide-react'
 
 export const TransactionsView: React.FC = () => {
   const { t, language } = useLanguage()
+  const { shop } = useAuth()
   const { transactions, customers, reverseTransaction, exportLedgerCsv } = useLedger()
 
   const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'yesterday' | '7days'>('all')
   const [typeFilter, setTypeFilter] = useState<'all' | 'CREDIT' | 'PAYMENT' | 'REVERSAL'>('all')
   const [searchQuery, setSearchQuery] = useState('')
+  const [isClosingModalOpen, setIsClosingModalOpen] = useState(false)
 
   const todayStr = getTodayDateString()
   const yesterdayStr = getRelativeDateString(-1)
@@ -62,13 +69,23 @@ export const TransactionsView: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={exportLedgerCsv}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-[#E3E5E0] hover:bg-slate-50 text-xs font-bold text-[#253B73] shadow-xs transition cursor-pointer self-start sm:self-auto"
-        >
-          <Download className="w-4 h-4 text-[#087F6E]" />
-          <span>CSV डाउनलोड करें (Export Ledger)</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
+          <button
+            onClick={() => setIsClosingModalOpen(true)}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#253B73] hover:bg-[#1a2b55] text-xs font-bold text-white shadow-xs transition cursor-pointer"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-[#E7A23B]" />
+            <span>दैनिक रोकड़ (Daily Closing)</span>
+          </button>
+
+          <button
+            onClick={exportLedgerCsv}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-[#E3E5E0] hover:bg-slate-50 text-xs font-bold text-[#253B73] shadow-xs transition cursor-pointer"
+          >
+            <Download className="w-4 h-4 text-[#087F6E]" />
+            <span>CSV डाउनलोड करें</span>
+          </button>
+        </div>
       </div>
 
       {/* Filter Bar */}
@@ -194,7 +211,7 @@ export const TransactionsView: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
                     <div className="text-right">
                       <span
                         className={`text-base sm:text-lg font-black ${
@@ -213,6 +230,32 @@ export const TransactionsView: React.FC = () => {
                       </span>
                     </div>
 
+                    {/* Print 80mm Slip */}
+                    <button
+                      onClick={() => {
+                        if (!customer) return
+                        const fallbackShop = {
+                          id: 'shop-default',
+                          name: 'किराना स्टोर',
+                          owner_name: 'दुकानदार',
+                          timezone: 'Asia/Kolkata',
+                          default_language: 'hi' as const,
+                          created_at: new Date().toISOString()
+                        }
+                        PdfReceiptService.printOrDownloadReceipt(
+                          tx,
+                          customer,
+                          shop || fallbackShop,
+                          0,
+                          tx.amount_paise
+                        )
+                      }}
+                      className="p-2 text-[#667085] hover:text-[#253B73] hover:bg-slate-100 rounded-xl transition cursor-pointer"
+                      title="पर्ची प्रिंट करें (Print 80mm Slip)"
+                    >
+                      <Printer className="w-4 h-4" />
+                    </button>
+
                     {!isReversal && (
                       <button
                         onClick={() => reverseTransaction(tx.id, 'User reversed from ledger table')}
@@ -229,6 +272,15 @@ export const TransactionsView: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Daily Closing Report Modal */}
+      <DailyClosingModal
+        isOpen={isClosingModalOpen}
+        onClose={() => setIsClosingModalOpen(false)}
+        transactions={transactions}
+        customers={customers}
+        shop={shop}
+      />
     </div>
   )
 }

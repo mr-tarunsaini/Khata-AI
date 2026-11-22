@@ -7,6 +7,7 @@ export type VoiceSessionStatus =
   | 'processing'
   | 'understanding'
   | 'clarification_required'
+  | 'confirm_create_customer'
   | 'saving'
   | 'success'
   | 'error'
@@ -20,10 +21,17 @@ export type VoiceIntentType =
   | 'QUERY_DAILY_PAYMENTS'
   | 'CORRECT_PENDING_TRANSACTION'
   | 'CLARIFY'
+  | 'CREATE_CUSTOMER'
+  | 'DAILY_CLOSING_REPORT'
+  | 'ANALYTICS_QUERY'
+  | 'UNDO_TRANSACTION'
+  | 'QUERY_INVENTORY'
+  | 'UPDATE_STOCK'
 
 export interface ParsedVoiceIntent {
   intent: VoiceIntentType
   customer_name: string | null
+  pronoun_used?: boolean
   amount_paise: number | null
   transaction_date: string | null // YYYY-MM-DD
   relative_date_phrase: string | null
@@ -32,6 +40,9 @@ export interface ParsedVoiceIntent {
   source_transcript: string
   correction_target?: 'PENDING_TRANSACTION' | string | null
   clarification_reason?: string | null
+  item_name?: string | null
+  item_quantity?: number | null
+  analytics_type?: string | null
 }
 
 export interface SpeechProviderConfig {
@@ -46,11 +57,4 @@ export interface SpeechRecognitionResult {
   isFinal: boolean
   confidence: number
   language: string
-}
-
-export interface SpeechSynthesisResult {
-  audioUrl?: string
-  audioBlob?: Blob
-  spokenText: string
-  durationMs?: number
 }

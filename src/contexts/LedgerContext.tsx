@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react'
-import { Customer, CustomerBalance, DailyAggregate, LedgerTransaction } from '@/types/ledger'
+import { Customer, CustomerBalance, DailyAggregate, LedgerTransaction, InventoryItem } from '@/types/ledger'
 import { INITIAL_DEMO_CUSTOMERS, INITIAL_DEMO_TRANSACTIONS, DEMO_SHOP } from '@/services/mock/mockData'
 import { LedgerService, CreateTransactionParams } from '@/services/ledger/ledgerService'
 import { normalizeCustomerName } from '@/services/ledger/customerResolver'
@@ -8,6 +8,7 @@ import { localDb } from '@/lib/indexedDb'
 import { formatINR } from '@/lib/money'
 import { useAuth } from '@/contexts/AuthContext'
 import { supabase, isSupabaseConfigured } from '@/services/database/supabaseClient'
+import { INITIAL_INVENTORY_ITEMS } from '@/services/inventory/inventoryService'
 
 interface LedgerContextType {
   customers: Customer[]
@@ -19,9 +20,19 @@ interface LedgerContextType {
   setSelectedCustomerId: (id: string | null) => void
   addTransaction: (params: Omit<CreateTransactionParams, 'shop_id'>) => Promise<{ transaction: LedgerTransaction; isDuplicate: boolean }>
   reverseTransaction: (targetTransactionId: string, reason?: string) => Promise<LedgerTransaction>
-  addCustomer: (displayName: string, phone?: string, notes?: string) => Promise<Customer>
+  addCustomer: (displayName: string, phone?: string, notes?: string, aliases?: string[]) => Promise<Customer>
   editCustomer: (id: string, updates: Partial<Customer>) => Promise<Customer>
   archiveCustomer: (id: string) => Promise<void>
+  addCustomerAlias: (customerId: string, alias: string) => Promise<Customer>
+  removeCustomerAlias: (customerId: string, alias: string) => Promise<Customer>
+  lastRecordedTx: LedgerTransaction | null
+  undoLastTransaction: () => Promise<LedgerTransaction | null>
+  dismissUndoToast: () => void
+  isInventoryEnabled: boolean
+  toggleInventoryModule: (enabled: boolean) => void
+  inventoryItems: InventoryItem[]
+  addInventoryItem: (itemName: string, quantity: number, unit: string, pricePaise: number, minStock?: number) => Promise<InventoryItem>
+  updateInventoryStock: (itemId: string, delta: number) => Promise<InventoryItem>
   resetDemoData: () => Promise<void>
   exportLedgerCsv: () => void
   isLoading: boolean
@@ -42,7 +53,35 @@ export const LedgerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return []
   })
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null)
+  const [lastRecordedTx, setLastRecordedTx] = useState<LedgerTransaction | null>(null)
   const [isLoading, setIsLoading] = useState<boolean>(true)
+
+  // Optional Inventory Module State
+  const [isInventoryEnabled, setIsInventoryEnabled] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('khata_ai_inventory_enabled') === 'true'
+    }
+    return false
+  })
+
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(`khata_ai_inv_${activeShopId}`)
+      if (saved) {
+        try { return JSON.parse(saved) } catch {}
+      }
+    }
+    return isDemoAccount
+      ? INITIAL_INVENTORY_ITEMS.map((item) => ({ ...item, shop_id: activeShopId }))
+      : []
+  })
+
+  const toggleInventoryModule = (enabled: boolean) => {
+    setIsInventoryEnabled(enabled)
+    localStorage.setItem('khata_ai_inventory_enabled', String(enabled))
+  }
+
+  const dismissUndoToast = () => setLastRecordedTx(null)
 
   // Initialize data on mount or shop switch
   useEffect(() => {
@@ -113,6 +152,12 @@ export const LedgerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [shop?.id, isAuthenticated, isDemoAccount, activeShopId])
 
+  // Save inventory changes to local storage
+  const saveInventory = (items: InventoryItem[]) => {
+    setInventoryItems(items)
+    localStorage.setItem(`khata_ai_inv_${activeShopId}`, JSON.stringify(items))
+  }
+
   // Calculate customer balances deterministically
   const customerBalances = useMemo(() => {
     const map = new Map<string, CustomerBalance>()
@@ -147,6 +192,7 @@ export const LedgerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       if (!result.isDuplicate) {
         setTransactions((prev) => [result.transaction, ...prev])
+        setLastRecordedTx(result.transaction)
 
         // Local IndexedDB persistence
         try {
@@ -221,14 +267,25 @@ export const LedgerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     [transactions, isAuthenticated]
   )
 
+  // Undo the most recent transaction
+  const undoLastTransaction = useCallback(async () => {
+    const target = lastRecordedTx || transactions[0]
+    if (!target) return null
+
+    const reversal = await reverseTransaction(target.id, 'Spoken or 1-tap undo action')
+    setLastRecordedTx(null)
+    return reversal
+  }, [lastRecordedTx, transactions, reverseTransaction])
+
   // Customer Management
   const addCustomer = useCallback(
-    async (displayName: string, phone?: string, notes?: string) => {
+    async (displayName: string, phone?: string, notes?: string, aliases: string[] = []) => {
       const newCustomer: Customer = {
         id: `cust-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         shop_id: activeShopId,
         display_name: displayName.trim(),
         normalized_name: normalizeCustomerName(displayName),
+        aliases: aliases.map((a) => a.trim()).filter(Boolean),
         phone: phone?.trim(),
         notes: notes?.trim(),
         created_at: new Date().toISOString(),
@@ -301,6 +358,42 @@ export const LedgerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     [customers, isAuthenticated]
   )
 
+  // Alias Management
+  const addCustomerAlias = useCallback(
+    async (customerId: string, alias: string) => {
+      const existing = customers.find((c) => c.id === customerId)
+      if (!existing) throw new Error('Customer not found')
+
+      const trimmed = alias.trim()
+      if (!trimmed) return existing
+
+      const currentAliases = existing.aliases || []
+      if (currentAliases.includes(trimmed)) return existing
+
+      const updated = await editCustomer(customerId, {
+        aliases: [...currentAliases, trimmed]
+      })
+
+      return updated
+    },
+    [customers, editCustomer]
+  )
+
+  const removeCustomerAlias = useCallback(
+    async (customerId: string, alias: string) => {
+      const existing = customers.find((c) => c.id === customerId)
+      if (!existing) throw new Error('Customer not found')
+
+      const currentAliases = existing.aliases || []
+      const updated = await editCustomer(customerId, {
+        aliases: currentAliases.filter((a) => a !== alias)
+      })
+
+      return updated
+    },
+    [customers, editCustomer]
+  )
+
   const archiveCustomer = useCallback(
     async (id: string) => {
       const existing = customers.find((c) => c.id === id)
@@ -331,6 +424,46 @@ export const LedgerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     },
     [customers, isAuthenticated]
+  )
+
+  // Inventory Management
+  const addInventoryItem = useCallback(
+    async (itemName: string, quantity: number, unit: string, pricePaise: number, minStock: number = 5) => {
+      const newItem: InventoryItem = {
+        id: `inv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        shop_id: activeShopId,
+        item_name: itemName.trim(),
+        normalized_name: itemName.toLowerCase().trim(),
+        quantity,
+        unit,
+        price_paise: pricePaise,
+        min_stock_threshold: minStock,
+        updated_at: new Date().toISOString()
+      }
+
+      const updated = [newItem, ...inventoryItems]
+      saveInventory(updated)
+      return newItem
+    },
+    [activeShopId, inventoryItems]
+  )
+
+  const updateInventoryStock = useCallback(
+    async (itemId: string, delta: number) => {
+      const existing = inventoryItems.find((i) => i.id === itemId)
+      if (!existing) throw new Error('Inventory item not found')
+
+      const updatedItem = {
+        ...existing,
+        quantity: Math.max(0, existing.quantity + delta),
+        updated_at: new Date().toISOString()
+      }
+
+      const updatedList = inventoryItems.map((i) => (i.id === itemId ? updatedItem : i))
+      saveInventory(updatedList)
+      return updatedItem
+    },
+    [inventoryItems]
   )
 
   const resetDemoData = useCallback(async () => {
@@ -389,6 +522,16 @@ export const LedgerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         addCustomer,
         editCustomer,
         archiveCustomer,
+        addCustomerAlias,
+        removeCustomerAlias,
+        lastRecordedTx,
+        undoLastTransaction,
+        dismissUndoToast,
+        isInventoryEnabled,
+        toggleInventoryModule,
+        inventoryItems,
+        addInventoryItem,
+        updateInventoryStock,
         resetDemoData,
         exportLedgerCsv,
         isLoading

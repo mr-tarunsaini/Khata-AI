@@ -1,9 +1,11 @@
 import React, { useState } from 'react'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { useAuth } from '@/contexts/AuthContext'
 import { useLedger } from '@/contexts/LedgerContext'
-import { Customer } from '@/types/ledger'
+import { Customer, LedgerTransaction, Shop } from '@/types/ledger'
 import { formatINR } from '@/lib/money'
 import { formatFriendlyDate } from '@/lib/dates'
+import { PdfReceiptService } from '@/services/receipt/pdfReceiptService'
 import {
   Users,
   Search,
@@ -17,7 +19,11 @@ import {
   Edit2,
   Archive,
   Check,
-  X
+  X,
+  Tag,
+  Plus,
+  Printer,
+  FileText
 } from 'lucide-react'
 
 interface CustomersViewProps {
@@ -32,6 +38,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
   onOpenVoice
 }) => {
   const { t, language } = useLanguage()
+  const { shop } = useAuth()
   const {
     customers,
     transactions,
@@ -40,7 +47,9 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
     editCustomer,
     archiveCustomer,
     addTransaction,
-    reverseTransaction
+    reverseTransaction,
+    addCustomerAlias,
+    removeCustomerAlias
   } = useLedger()
 
   const [searchQuery, setSearchQuery] = useState('')
@@ -48,6 +57,11 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
   const [newName, setNewName] = useState('')
   const [newPhone, setNewPhone] = useState('')
   const [newNotes, setNewNotes] = useState('')
+  const [newAlias, setNewAlias] = useState('')
+
+  // Alias state inside customer detail
+  const [aliasInput, setAliasInput] = useState('')
+  const [isAddingAlias, setIsAddingAlias] = useState(false)
 
   // Quick transaction modal for customer detail
   const [isQuickTxOpen, setIsQuickTxOpen] = useState(false)
@@ -77,11 +91,68 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
     e.preventDefault()
     if (!newName.trim()) return
     const created = await addCustomer(newName, newPhone, newNotes)
+    if (newAlias.trim()) {
+      await addCustomerAlias(created.id, newAlias.trim())
+    }
     setNewName('')
     setNewPhone('')
     setNewNotes('')
+    setNewAlias('')
     setIsAddModalOpen(false)
     onSelectCustomer(created.id)
+  }
+
+  const handleAddAlias = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedCustomer || !aliasInput.trim()) return
+    await addCustomerAlias(selectedCustomer.id, aliasInput.trim())
+    setAliasInput('')
+    setIsAddingAlias(false)
+  }
+
+  const handleRemoveAlias = async (alias: string) => {
+    if (!selectedCustomer) return
+    await removeCustomerAlias(selectedCustomer.id, alias)
+  }
+
+  const handlePrintStatement = () => {
+    if (!selectedCustomer) return
+    const fallbackShop: Shop = {
+      id: 'shop-default',
+      name: 'किराना स्टोर',
+      owner_name: 'दुकानदार',
+      timezone: 'Asia/Kolkata',
+      default_language: 'hi',
+      created_at: new Date().toISOString()
+    }
+    PdfReceiptService.printOrDownloadCustomerLedgerPdf(
+      selectedCustomer,
+      selectedCustomerTransactions,
+      shop || fallbackShop,
+      selectedBalance?.balance_paise || 0
+    )
+  }
+
+  const handlePrintSlip = (tx: LedgerTransaction) => {
+    if (!selectedCustomer) return
+    const currentBal = selectedBalance?.balance_paise || 0
+    const isCredit = tx.type === 'CREDIT'
+    const prevBal = isCredit ? currentBal - tx.amount_paise : currentBal + tx.amount_paise
+    const fallbackShop: Shop = {
+      id: 'shop-default',
+      name: 'किराना स्टोर',
+      owner_name: 'दुकानदार',
+      timezone: 'Asia/Kolkata',
+      default_language: 'hi',
+      created_at: new Date().toISOString()
+    }
+    PdfReceiptService.printOrDownloadReceipt(
+      tx,
+      selectedCustomer,
+      shop || fallbackShop,
+      prevBal,
+      currentBal
+    )
   }
 
   const handleAddQuickTx = async (e: React.FormEvent) => {
@@ -120,32 +191,106 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
             <span>वापस (Back to list)</span>
           </button>
 
-          <button
-            onClick={() => archiveCustomer(selectedCustomer.id)}
-            className="text-xs font-semibold text-[#B42318] hover:underline flex items-center gap-1 cursor-pointer"
-          >
-            <Archive className="w-3.5 h-3.5" />
-            <span>{t.archiveCustomer}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handlePrintStatement}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#253B73]/10 hover:bg-[#253B73]/20 text-xs font-bold text-[#253B73] transition cursor-pointer"
+              title="पूरा खाता विवरणी PDF में प्रिंट/डाउनलोड करें"
+            >
+              <FileText className="w-4 h-4" />
+              <span>खाता पर्ची (PDF Statement)</span>
+            </button>
+
+            <button
+              onClick={() => archiveCustomer(selectedCustomer.id)}
+              className="text-xs font-semibold text-[#B42318] hover:underline flex items-center gap-1 cursor-pointer ml-2"
+            >
+              <Archive className="w-3.5 h-3.5" />
+              <span>{t.archiveCustomer}</span>
+            </button>
+          </div>
         </div>
 
         {/* Customer Balance Banner Card */}
         <div className="bg-white rounded-3xl p-6 border border-[#E3E5E0] shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
-          <div>
+          <div className="space-y-2">
             <h1 className="text-2xl font-black text-[#17233B]">
               {selectedCustomer.display_name}
             </h1>
             {selectedCustomer.phone && (
-              <p className="text-xs text-[#667085] flex items-center gap-1.5 mt-1">
+              <p className="text-xs text-[#667085] flex items-center gap-1.5">
                 <Phone className="w-3.5 h-3.5 text-[#087F6E]" />
                 <span>{selectedCustomer.phone}</span>
               </p>
             )}
             {selectedCustomer.notes && (
-              <p className="text-xs text-[#667085] mt-1.5 italic">
+              <p className="text-xs text-[#667085] italic">
                 “{selectedCustomer.notes}”
               </p>
             )}
+
+            {/* Customer Aliases (उपनाम) */}
+            <div className="pt-2 border-t border-[#E3E5E0]/60">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-bold text-[#667085] flex items-center gap-1 mr-1">
+                  <Tag className="w-3 h-3 text-[#E7A23B]" />
+                  उपनाम:
+                </span>
+                {selectedCustomer.aliases && selectedCustomer.aliases.length > 0 ? (
+                  selectedCustomer.aliases.map((al) => (
+                    <span
+                      key={al}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#E7A23B]/10 text-[#A86408] text-[11px] font-semibold border border-[#E7A23B]/30"
+                    >
+                      <span>#{al}</span>
+                      <button
+                        onClick={() => handleRemoveAlias(al)}
+                        className="hover:text-red-700 ml-0.5 text-xs font-bold leading-none"
+                        title="उपनाम हटाएं"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-[11px] text-[#667085] italic">कोई उपनाम दर्ज नहीं</span>
+                )}
+
+                {isAddingAlias ? (
+                  <form onSubmit={handleAddAlias} className="inline-flex items-center gap-1 ml-1">
+                    <input
+                      type="text"
+                      autoFocus
+                      value={aliasInput}
+                      onChange={(e) => setAliasInput(e.target.value)}
+                      placeholder="उदा. मास्टर जी"
+                      className="px-2 py-0.5 text-xs bg-[#F8F7F2] border border-[#E3E5E0] rounded-lg focus:outline-none focus:ring-1 focus:ring-[#253B73] w-28"
+                    />
+                    <button
+                      type="submit"
+                      className="px-2 py-0.5 bg-[#087F6E] text-white text-xs font-bold rounded-lg cursor-pointer"
+                    >
+                      जोड़ें
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingAlias(false)}
+                      className="px-1.5 py-0.5 text-[#667085] hover:text-black text-xs font-bold cursor-pointer"
+                    >
+                      ×
+                    </button>
+                  </form>
+                ) : (
+                  <button
+                    onClick={() => setIsAddingAlias(true)}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-[#087F6E] hover:underline ml-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>+ उपनाम</span>
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
 
           <div className="text-left sm:text-right bg-[#F8F7F2] p-4 rounded-2xl border border-[#E3E5E0] w-full sm:w-auto">
@@ -305,6 +450,15 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                         </span>
                       </div>
 
+                      {/* Print 80mm Slip */}
+                      <button
+                        onClick={() => handlePrintSlip(tx)}
+                        className="p-2 text-[#667085] hover:text-[#253B73] hover:bg-slate-100 rounded-lg transition"
+                        title="पर्ची प्रिंट करें (Print 80mm Slip)"
+                      >
+                        <Printer className="w-4 h-4" />
+                      </button>
+
                       {/* Reversal action if not already a reversal */}
                       {!isReversal && (
                         <button
@@ -401,6 +555,20 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                     </span>
                   </div>
 
+                  {/* Customer Aliases */}
+                  {cust.aliases && cust.aliases.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {cust.aliases.map((al) => (
+                        <span
+                          key={al}
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-[#E7A23B]/10 text-[#A86408] border border-[#E7A23B]/20"
+                        >
+                          #{al}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
                   {cust.phone && (
                     <p className="text-xs text-[#667085] flex items-center gap-1.5 mt-2">
                       <Phone className="w-3.5 h-3.5" />
@@ -479,6 +647,22 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                   placeholder="उदा. गली नं 4, दर्जी"
                   className="w-full px-3.5 py-2.5 bg-[#F8F7F2] border border-[#E3E5E0] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#253B73]"
                 />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-[#17233B] block mb-1">
+                  पहचान / उपनाम (Alias - Optional)
+                </label>
+                <input
+                  type="text"
+                  value={newAlias}
+                  onChange={(e) => setNewAlias(e.target.value)}
+                  placeholder="उदा. मास्टर जी, शर्मा जी, नुक्कड़ वाले"
+                  className="w-full px-3.5 py-2.5 bg-[#F8F7F2] border border-[#E3E5E0] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#253B73]"
+                />
+                <p className="text-[10px] text-[#667085] mt-1">
+                  आवाज़ से बोलते समय ग्राहक को इस नाम से भी पहचाना जा सकेगा।
+                </p>
               </div>
 
               <div className="pt-2 flex gap-3">

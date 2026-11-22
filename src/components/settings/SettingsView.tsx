@@ -16,13 +16,21 @@ import {
   ShieldCheck,
   Check,
   Key,
-  HardDrive
+  HardDrive,
+  Boxes
 } from 'lucide-react'
 
 export const SettingsView: React.FC = () => {
   const { language, setLanguage, t } = useLanguage()
   const { shop, user, logout, updateShopName } = useAuth()
-  const { customers, transactions, resetDemoData, exportLedgerCsv } = useLedger()
+  const {
+    customers,
+    transactions,
+    resetDemoData,
+    exportLedgerCsv,
+    isInventoryEnabled,
+    toggleInventoryModule
+  } = useLedger()
   const { isOnline } = usePwa()
 
   const [shopNameInput, setShopNameInput] = useState(shop?.name || '')
@@ -216,7 +224,49 @@ export const SettingsView: React.FC = () => {
         )}
       </div>
 
-      {/* 4. Cache & Data Controls */}
+      {/* 4. Modular Voice Inventory Module Toggle */}
+      <div className="bg-white rounded-3xl p-6 border border-[#E3E5E0] shadow-xs space-y-4">
+        <div className="flex items-center justify-between pb-2 border-b border-[#E3E5E0]">
+          <div className="flex items-center gap-2.5">
+            <Boxes className="w-5 h-5 text-[#253B73]" />
+            <div>
+              <h2 className="text-base font-bold text-[#17233B]">
+                मॉड्यूलर किराना इन्वेंट्री (Voice Inventory Module)
+              </h2>
+              <p className="text-xs text-[#667085]">
+                किराना दुकान के प्रमुख सामान का स्टॉक बोलकर चेक व अपडेट करें
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => toggleInventoryModule(!isInventoryEnabled)}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${
+              isInventoryEnabled ? 'bg-[#087F6E]' : 'bg-slate-300'
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                isInventoryEnabled ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </div>
+
+        <div className="text-xs text-[#667085] leading-relaxed">
+          {isInventoryEnabled ? (
+            <p className="text-[#087F6E] font-medium">
+              ✅ इन्वेंट्री मॉड्यूल सक्रिय है। साइडबार में "इन्वेंट्री" टैब उपलब्ध है। आप बोल सकते हैं: <em>"चावल कितना बचा है?"</em> या <em>"20 किलो चीनी आई।"</em>
+            </p>
+          ) : (
+            <p>
+              इन्वेंट्री मॉड्यूल बंद है। यदि आपकी किराना दुकान में स्टॉक ट्रैकिंग की आवश्यकता हो, तो इसे सक्षम करें।
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* 5. Cache & Data Controls */}
       <div className="bg-white rounded-3xl p-6 border border-[#E3E5E0] shadow-xs space-y-4">
         <div className="flex items-center gap-2.5 pb-2 border-b border-[#E3E5E0]">
           <HardDrive className="w-5 h-5 text-[#253B73]" />

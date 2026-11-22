@@ -1,4 +1,4 @@
-# Implementation Tasks — KhataAI
+# Implementation Tasks — KhataAI (Advanced Edition)
 
 Use `[ ]` todo, `[/]` in progress, `[x]` complete. Do not mark complete without implementation and verification.
 
@@ -16,7 +16,8 @@ Use `[ ]` todo, `[/]` in progress, `[x]` complete. Do not mark complete without 
 - [x] Add PWA manifest, service worker, installability and offline app shell.
 - [x] Add language selector and first-turn AI disclosure.
 - [x] Add `.env.example` and verify `.env` is ignored.
-- [x] Add demo mode banner and synthetic seed data.
+- [x] Fix sidebar to be stationary and independent from scrolling content.
+- [x] Remove top demo mode banner for clean production look.
 
 ## Phase 2 — Ledger core (highest priority)
 - [x] Define money utility using integer paise (zero floats).
@@ -36,7 +37,6 @@ Use `[ ]` todo, `[/]` in progress, `[x]` complete. Do not mark complete without 
 - [x] Implement WebSpeechProvider for browser native live microphone streaming.
 - [x] Verify official Gnani STT API contract and proxy gateway (`server/voiceGateway.ts`).
 - [x] Implement Gnani STT streaming adapter (`GnaniSpeechProvider.ts`).
-- [x] Verify official Gnani TTS API contract and proxy gateway.
 - [x] Implement Gnani TTS adapter (`GnaniSpeechProvider.ts`).
 - [x] Add provider timeout (10s), exponential backoff retry, rate-limit and error handling.
 - [x] Add unit tests for all speech providers (7 passing tests, total 33 tests).
@@ -46,13 +46,13 @@ Use `[ ]` todo, `[/]` in progress, `[x]` complete. Do not mark complete without 
 - [x] Support numeric, Hindi number words and English number phrases.
 - [x] Parse credit/payment direction.
 - [x] Parse “kal” and “parso” with Asia/Kolkata.
-- [x] Implement strict intent schema and validation.
+- [x] Implement strict intent schema and Gemini 3.5 Flash Lite live integration.
 - [x] Implement confidence thresholds and clarification.
 - [x] Implement pending draft correction (“nahi, 430”).
 - [x] Ensure transcript cannot trigger arbitrary tool actions.
 - [x] Add parser and conversation-state tests (11 passing tests).
 
-## Phase 5 — UI surfaces
+## Phase 5 — UI surfaces & Auth
 - [x] Build voice-first home screen with 10 explicit states.
 - [x] Build live streaming transcript and intent preview.
 - [x] Build spoken clarification UI for duplicate customers.
@@ -60,26 +60,21 @@ Use `[ ]` todo, `[/]` in progress, `[x]` complete. Do not mark complete without 
 - [x] Build customer detail and running ledger history.
 - [x] Build transaction history with multi-criteria filters.
 - [x] Build daily summary dashboard.
-- [x] Build settings, privacy and demo reset controls.
+- [x] Implement authentic Supabase Auth login/signup + pre-loaded test account (`sharma.kirana@demo.in`).
+- [x] Guarantee clean empty slate (0 customers, 0 transactions) for new merchant registrations.
 
-## Phase 6 — Persistence and security
-- [x] Create Supabase schema/migrations (shops, profiles, customers, ledger_transactions, audit_events, pending_voice_sessions).
-- [x] Configure Auth and shop membership.
-- [x] Add and test RLS policies.
-- [x] Move provider secrets to server environment.
-- [x] Add transcript/audio retention controls.
-- [x] Add export/delete flows (CSV export, demo reset).
-- [x] Implement AES-GCM encrypted IndexedDB cache using Web Crypto.
-- [x] Implement documented key derivation/session-key, lock, logout and cache-expiry behaviour.
-- [x] Implement encrypted idempotent offline outbox and conflict-safe sync.
-- [x] Add audit events without sensitive transcript logging.
+## Phase 6 — Advanced Feature Enhancements
+- [/] Task 6.1: Context-aware voice conversations with short-lived session memory (90-sec TTL, pronoun/anaphora resolution).
+- [ ] Task 6.2: Personalized shop-specific customer aliases (alias schema, resolver matching, UI badges).
+- [ ] Task 6.3: Voice-based customer creation (unknown customer detection, confirmation prompt, atomic ledger execution).
+- [ ] Task 6.4: Daily closing reports with credit, payments, and outstanding summaries (modal, TTS spoken overview, export).
+- [ ] Task 6.5: AI-powered business analytics using deterministic database queries (aging buckets, recovery rates, 100% deterministic math).
+- [ ] Task 6.6: PDF transaction receipt generation (custom 80mm slip, customer ledger PDF export).
+- [ ] Task 6.7: Transaction undo through auditable reversal entries (instant undo toast, `REVERSAL` transaction creation, audit events).
+- [ ] Task 6.8: Voice-based inventory management as an optional module (Settings toggle, item schema, voice stock check/update).
 
-## Phase 7 — Judging readiness
-- [x] Run all acceptance scenarios in PRD.md.
-- [x] Test noisy audio and multiple number formats.
-- [x] Test duplicate names and correction handling.
-- [x] Measure end-of-speech-to-first-audio latency (< 2s target verified).
-- [x] Test on mobile and desktop viewports.
-- [x] Verify no secrets in Git history/client bundle.
-- [x] Create comprehensive README with setup, architecture diagram, and demo steps.
-- [x] Run lint, typecheck, tests and production build.
+## Phase 7 — Verification & Documentation
+- [ ] Verify Vitest test suite passes with new feature coverage.
+- [ ] Verify Vite production build with zero TypeScript errors.
+- [ ] Test end-to-end user flows in browser.
+- [ ] Update PROGRESS.md with completion timestamps and metrics.

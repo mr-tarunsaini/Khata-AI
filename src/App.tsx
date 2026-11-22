@@ -12,8 +12,10 @@ import { DashboardView } from '@/components/dashboard/DashboardView'
 import { VoiceKhataView } from '@/components/voice/VoiceKhataView'
 import { CustomersView } from '@/components/customers/CustomersView'
 import { TransactionsView } from '@/components/ledger/TransactionsView'
+import { InventoryView } from '@/components/inventory/InventoryView'
 import { SettingsView } from '@/components/settings/SettingsView'
 import { AuthView } from '@/components/auth/AuthView'
+import { UndoToast } from '@/components/common/UndoToast'
 
 const MainAppContent: React.FC = () => {
   const { isAuthenticated } = useAuth()
@@ -91,11 +93,18 @@ const MainAppContent: React.FC = () => {
 
           {activeTab === 'transactions' && <TransactionsView />}
 
+          {activeTab === 'inventory' && (
+            <InventoryView onOpenVoice={() => setActiveTab('voice')} />
+          )}
+
           {activeTab === 'settings' && <SettingsView />}
         </main>
       </div>
 
-      {/* 4. Mobile Bottom Navigation Bar with Hero Voice Mic */}
+      {/* 4. Global 5-Second Transaction Undo Toast */}
+      <UndoToast />
+
+      {/* 5. Mobile Bottom Navigation Bar with Hero Voice Mic */}
       <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
     </div>
   )

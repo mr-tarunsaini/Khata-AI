@@ -28,14 +28,19 @@ const DEVANAGARI_NAME_MAP: Record<string, string> = {
   'अजय': 'ajay',
   'मनोज': 'manoj',
   'सोनू': 'sonu',
-  'मोनू': 'monu'
+  'मोनू': 'monu',
+  'मास्टर': 'master',
+  'डॉक्टर': 'doctor',
+  'पप्पू': 'pappu',
+  'चाचा': 'chacha',
+  'ताऊ': 'tau'
 }
 
 // Common Indic honorifics to strip during normalization
-const HONORIFICS = ['ji', 'bhai', 'bhiya', 'bhaiya', 'sahab', 'saheb', 'uncle', 'jiya', 'ji', 'जी', 'भाई', 'भैया', 'साहब']
+const HONORIFICS = ['ji', 'bhai', 'bhiya', 'bhaiya', 'sahab', 'saheb', 'uncle', 'jiya', 'जी', 'भाई', 'भैया', 'साहब']
 
 /**
- * Normalizes customer name for robust searching.
+ * Normalizes customer name or alias for robust searching.
  * Handles case, accents, Devanagari transliteration, and honorific removal.
  */
 export function normalizeCustomerName(rawName: string): string {
@@ -60,7 +65,8 @@ export function normalizeCustomerName(rawName: string): string {
 }
 
 /**
- * Resolves a spoken customer name against the shop's customer list.
+ * Resolves a spoken customer name against the shop's customer list,
+ * matching against display names, normalized names, and personalized aliases.
  */
 export function resolveCustomer(spokenName: string, customers: Customer[]): MatchResult {
   const normalizedQuery = normalizeCustomerName(spokenName)
@@ -85,7 +91,23 @@ export function resolveCustomer(spokenName: string, customers: Customer[]): Matc
     return { type: 'AMBIGUOUS', candidates: exactMatches }
   }
 
-  // 2. Token / word match (e.g. query "Ramesh" against "Ramesh Sharma" and "Ramesh Gupta")
+  // 2. Match against personalized customer aliases (e.g. "Master ji", "Nukkad wale", "Doctor saab")
+  const aliasMatches = activeCustomers.filter((c) =>
+    c.aliases?.some((alias) => {
+      const normAlias = normalizeCustomerName(alias)
+      return normAlias === normalizedQuery || normAlias.includes(normalizedQuery) || normalizedQuery.includes(normAlias)
+    })
+  )
+
+  if (aliasMatches.length === 1) {
+    return { type: 'EXACT', customer: aliasMatches[0] }
+  }
+
+  if (aliasMatches.length > 1) {
+    return { type: 'AMBIGUOUS', candidates: aliasMatches }
+  }
+
+  // 3. Token / partial match (e.g. query "Ramesh" against "Ramesh Sharma" and "Ramesh Gupta")
   const queryTokens = normalizedQuery.split(' ')
 
   const tokenMatches = activeCustomers.filter((c) => {

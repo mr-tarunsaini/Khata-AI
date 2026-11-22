@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { useAuth } from '@/contexts/AuthContext'
 import { useLedger } from '@/contexts/LedgerContext'
 import { usePwa } from '@/contexts/PwaContext'
 import { VoiceSessionStatus, ParsedVoiceIntent } from '@/types/voice'
@@ -13,6 +14,11 @@ import { webSpeechProvider } from '@/services/speech/WebSpeechProvider'
 import { audioRecorder } from '@/services/speech/audioRecorder'
 import { parseIntentFromTranscript } from '@/services/parser/intentParser'
 import { resolveCustomer, buildDuplicateClarificationPrompt } from '@/services/ledger/customerResolver'
+import { sessionMemory } from '@/services/voice/voiceSessionMemory'
+import { AnalyticsService } from '@/services/ledger/analyticsService'
+import { InventoryService } from '@/services/inventory/inventoryService'
+import { DailyClosingModal } from '@/components/reports/DailyClosingModal'
+import { AnalyticsModal } from '@/components/analytics/AnalyticsModal'
 import { formatINR, formatSpokenINR } from '@/lib/money'
 import { formatFriendlyDate, getTodayDateString } from '@/lib/dates'
 import {
@@ -29,7 +35,12 @@ import {
   Radio,
   Clock,
   Mic,
-  Settings2
+  Settings2,
+  UserPlus,
+  FileSpreadsheet,
+  PieChart,
+  Boxes,
+  Undo2
 } from 'lucide-react'
 
 interface PendingDraft {
@@ -38,6 +49,12 @@ interface PendingDraft {
   amount_paise: number
   effective_date: string
   source_transcript: string
+}
+
+interface NewCustomerPrompt {
+  name: string
+  amount_paise?: number
+  type: 'CREDIT' | 'PAYMENT'
 }
 
 interface LatencyBreakdown {
@@ -50,7 +67,20 @@ interface LatencyBreakdown {
 
 export const VoiceKhataView: React.FC = () => {
   const { t, language } = useLanguage()
-  const { customers, transactions, addTransaction, customerBalances, todayAggregates } = useLedger()
+  const { shop } = useAuth()
+  const {
+    customers,
+    transactions,
+    addTransaction,
+    addCustomer,
+    customerBalances,
+    todayAggregates,
+    undoLastTransaction,
+    lastRecordedTx,
+    inventoryItems,
+    isInventoryEnabled,
+    updateInventoryStock
+  } = useLedger()
   const { isOnline } = usePwa()
 
   const [providerType, setProviderType] = useState<ActiveProviderType>(speechRegistry.getActiveType())
@@ -61,14 +91,37 @@ export const VoiceKhataView: React.FC = () => {
   const [parsedIntent, setParsedIntent] = useState<ParsedVoiceIntent | null>(null)
   const [pendingDraft, setPendingDraft] = useState<PendingDraft | null>(null)
   const [duplicateCandidates, setDuplicateCandidates] = useState<Customer[] | null>(null)
+  const [newCustomerPrompt, setNewCustomerPrompt] = useState<NewCustomerPrompt | null>(null)
   const [lastSpokenResponse, setLastSpokenResponse] = useState<string>('')
   const [latencyBreakdown, setLatencyBreakdown] = useState<LatencyBreakdown | null>(null)
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [testInput, setTestInput] = useState<string>('')
   const [audioVolume, setAudioVolume] = useState<number>(0)
 
-  // Abort controller for cancellation
+  // Modals for Advanced Features
+  const [isClosingModalOpen, setIsClosingModalOpen] = useState(false)
+  const [isAnalyticsModalOpen, setIsAnalyticsModalOpen] = useState(false)
+
+  // Context Session Memory ticker state
+  const [sessionActiveName, setSessionActiveName] = useState<string | null>(null)
+  const [sessionTimeLeft, setSessionTimeLeft] = useState<number>(0)
+
   const abortControllerRef = useRef<AbortController | null>(null)
+
+  // Check active session memory every second
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (sessionMemory.isValid()) {
+        const mem = sessionMemory.getMemory()
+        setSessionActiveName(mem?.activeCustomerName || null)
+        setSessionTimeLeft(sessionMemory.getRemainingSeconds())
+      } else {
+        setSessionActiveName(null)
+        setSessionTimeLeft(0)
+      }
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   // Listen to provider registry changes
   useEffect(() => {
@@ -129,18 +182,30 @@ export const VoiceKhataView: React.FC = () => {
       const ledgerStart = performance.now()
 
       try {
-        await addTransaction({
+        const res = await addTransaction({
           customer_id: draft.customer.id,
           type: draft.type,
           amount_paise: draft.amount_paise,
           effective_date: draft.effective_date,
           source: 'VOICE',
-          transcript_ref: draft.source_transcript
+          transcript_ref: draft.source_transcript,
+          note: `${draft.type === 'CREDIT' ? 'उधार' : 'जमा'} (वॉयस खाता)`
         })
 
         const ledgerMs = Math.round(performance.now() - ledgerStart)
 
-        // Updated balance
+        // Update short-lived context session memory (Feature 1)
+        sessionMemory.update({
+          activeCustomerId: draft.customer.id,
+          activeCustomerName: draft.customer.display_name,
+          lastTransactionId: res.transaction.id,
+          lastAmountPaise: draft.amount_paise,
+          lastIntent: draft.type === 'CREDIT' ? 'ADD_CREDIT' : 'RECORD_PAYMENT'
+        })
+        setSessionActiveName(draft.customer.display_name)
+        setSessionTimeLeft(sessionMemory.getRemainingSeconds())
+
+        // Calculate updated balance
         const updatedBal = customerBalances.get(draft.customer.id)
         const newBalPaise =
           draft.type === 'CREDIT'
@@ -163,6 +228,7 @@ export const VoiceKhataView: React.FC = () => {
         setStatus('success')
         setPendingDraft(null)
         setDuplicateCandidates(null)
+        setNewCustomerPrompt(null)
         await speakResponse(speechText, sttMs, intentMs, ledgerMs)
 
         setTimeout(() => {
@@ -176,12 +242,46 @@ export const VoiceKhataView: React.FC = () => {
     [addTransaction, customerBalances, language, speakResponse]
   )
 
+  // Confirm and create a new customer by voice/tap (Feature 3)
+  const handleConfirmNewCustomer = async () => {
+    if (!newCustomerPrompt) return
+    setStatus('saving')
+
+    try {
+      const created = await addCustomer(newCustomerPrompt.name)
+      if (newCustomerPrompt.amount_paise && newCustomerPrompt.amount_paise > 0) {
+        const draft: PendingDraft = {
+          customer: created,
+          type: newCustomerPrompt.type,
+          amount_paise: newCustomerPrompt.amount_paise,
+          effective_date: getTodayDateString(),
+          source_transcript: `Naya grahak: ${newCustomerPrompt.name}`
+        }
+        await commitTransaction(draft, 0, 0)
+      } else {
+        sessionMemory.update({
+          activeCustomerId: created.id,
+          activeCustomerName: created.display_name
+        })
+        const speech = `${created.display_name} ka naya khata jud gaya hai.`
+        setStatus('success')
+        setNewCustomerPrompt(null)
+        await speakResponse(speech, 0, 0, 0)
+        setTimeout(() => setStatus('idle'), 3000)
+      }
+    } catch (err: any) {
+      setStatus('error')
+      setErrorMessage(err.message || 'Customer creation failed')
+    }
+  }
+
   // Process a recognized speech transcript
   const processTranscript = useCallback(
     async (rawText: string, sttMs: number = 0) => {
       setStatus('processing')
       setErrorMessage('')
       setInterimTranscript('')
+      setNewCustomerPrompt(null)
 
       const cleanText = rawText.trim()
       setTranscript(cleanText)
@@ -202,9 +302,12 @@ export const VoiceKhataView: React.FC = () => {
           intent = {
             intent: geminiData.intent,
             customer_name: geminiData.customer_name || null,
+            pronoun_used: Boolean(geminiData.pronoun_used),
             amount_paise: geminiData.amount_paise || null,
             transaction_date: getTodayDateString(),
             relative_date_phrase: geminiData.relative_date_phrase || null,
+            item_name: geminiData.item_name || null,
+            item_quantity: geminiData.item_quantity || null,
             currency: 'INR',
             confidence: geminiData.confidence || 0.95,
             source_transcript: cleanText
@@ -219,9 +322,98 @@ export const VoiceKhataView: React.FC = () => {
       const intentMs = Math.round(performance.now() - intentStart)
       setParsedIntent(intent)
 
-      // 1. Pending draft correction: "Nahi, 430"
-      if (intent.intent === 'CORRECT_PENDING_TRANSACTION' && pendingDraft) {
-        if (intent.amount_paise) {
+      // =======================================================================
+      // ADVANCED FEATURE 1: Context Session Pronoun Resolution ("usne", "inka")
+      // =======================================================================
+      if (!intent.customer_name || intent.pronoun_used || sessionMemory.detectPronounReference(cleanText)) {
+        const contextualMatch = sessionMemory.resolveCustomerFromContext(cleanText)
+        if (contextualMatch) {
+          intent.customer_name = contextualMatch.customerName
+        }
+      }
+
+      // =======================================================================
+      // ADVANCED FEATURE 7: Voice Undo ("Pichhla hisaab undo karo")
+      // =======================================================================
+      if (intent.intent === 'UNDO_TRANSACTION') {
+        const reversal = await undoLastTransaction()
+        if (reversal) {
+          const cust = customers.find((c) => c.id === reversal.customer_id)
+          const speech = `${cust?.display_name || 'Grahak'} ka ${formatSpokenINR(reversal.amount_paise, language)} ka hisaab undo kar diya gaya.`
+          setStatus('success')
+          await speakResponse(speech, sttMs, intentMs, 10)
+        } else {
+          const speech = 'Undo karne ke liye koi haaliya transaction nahi mila.'
+          setStatus('error')
+          setErrorMessage(speech)
+          await speakResponse(speech, sttMs, intentMs, 0)
+        }
+        return
+      }
+
+      // =======================================================================
+      // ADVANCED FEATURE 4: Daily Closing Report ("Aaj ka hisaab dikhao")
+      // =======================================================================
+      if (intent.intent === 'DAILY_CLOSING_REPORT') {
+        setIsClosingModalOpen(true)
+        const report = AnalyticsService.generateDailyClosingReport(getTodayDateString(), transactions, customers)
+        setStatus('success')
+        await speakResponse(report.spoken_summary, sttMs, intentMs, 5)
+        return
+      }
+
+      // =======================================================================
+      // ADVANCED FEATURE 5: AI Business Analytics ("Sabse zyada udhaar kiska hai")
+      // =======================================================================
+      if (intent.intent === 'ANALYTICS_QUERY') {
+        setIsAnalyticsModalOpen(true)
+        const analytics = AnalyticsService.calculateBusinessAnalytics(transactions, customers)
+        const speech = `Aapki dukan par kul ${formatINR(analytics.total_outstanding_paise)} ka udhaar baazar mein hai, aur vasooli dar ${analytics.recovery_rate_percentage} percent hai.`
+        setStatus('success')
+        await speakResponse(speech, sttMs, intentMs, 5)
+        return
+      }
+
+      // =======================================================================
+      // ADVANCED FEATURE 8: Voice Inventory ("Atta ka stock kitna hai")
+      // =======================================================================
+      if (intent.intent === 'QUERY_INVENTORY') {
+        const found = InventoryService.findItemByQuery(intent.item_name || cleanText, inventoryItems)
+        if (found) {
+          const speech = `${found.item_name} ka stock ${found.quantity} ${found.unit} bacha hai.`
+          setStatus('success')
+          await speakResponse(speech, sttMs, intentMs, 5)
+        } else {
+          const low = InventoryService.getLowStockItems(inventoryItems)
+          const speech = `Dukan mein ${low.length} items ka stock kam hai.`
+          setStatus('success')
+          await speakResponse(speech, sttMs, intentMs, 5)
+        }
+        return
+      }
+
+      if (intent.intent === 'UPDATE_STOCK') {
+        const found = InventoryService.findItemByQuery(cleanText, inventoryItems)
+        if (found) {
+          const qty = intent.item_quantity || 5
+          await updateInventoryStock(found.id, qty)
+          const speech = `${found.item_name} mein ${qty} ${found.unit} jod diya gaya. Naya stock ${found.quantity + qty} hai.`
+          setStatus('success')
+          await speakResponse(speech, sttMs, intentMs, 5)
+        } else {
+          setStatus('error')
+          const speech = 'Samaan nahi mila. Kripya samaan ka sahi naam batayein.'
+          setErrorMessage(speech)
+          await speakResponse(speech, sttMs, intentMs, 0)
+        }
+        return
+      }
+
+      // =======================================================================
+      // Pending draft correction: "Nahi, 430"
+      // =======================================================================
+      if (intent.intent === 'CORRECT_PENDING_TRANSACTION') {
+        if (pendingDraft && intent.amount_paise) {
           const updatedDraft: PendingDraft = {
             ...pendingDraft,
             amount_paise: intent.amount_paise,
@@ -237,12 +429,38 @@ export const VoiceKhataView: React.FC = () => {
           await speakResponse(speechText, sttMs, intentMs, 0)
           return
         }
+
+        // Context-aware correction of last committed transaction
+        const mem = sessionMemory.getMemory()
+        if (mem?.activeCustomerId && intent.amount_paise) {
+          const cust = customers.find((c) => c.id === mem.activeCustomerId)
+          if (cust) {
+            const draft: PendingDraft = {
+              customer: cust,
+              type: mem.lastIntent === 'RECORD_PAYMENT' ? 'PAYMENT' : 'CREDIT',
+              amount_paise: intent.amount_paise,
+              effective_date: getTodayDateString(),
+              source_transcript: cleanText
+            }
+            setPendingDraft(draft)
+            setStatus('understanding')
+            const speechText = `Theek hai, ${cust.display_name} ka amount badal kar ${formatSpokenINR(intent.amount_paise, language)} kar raha hoon.`
+            await speakResponse(speechText, sttMs, intentMs, 0)
+            return
+          }
+        }
       }
 
-      // 2. Balance Query: "Ramesh ka total kitna hai?"
+      // =======================================================================
+      // Balance Query: "Ramesh ka total kitna hai?"
+      // =======================================================================
       if (intent.intent === 'QUERY_CUSTOMER_BALANCE' && intent.customer_name) {
         const match = resolveCustomer(intent.customer_name, customers)
         if (match.type === 'EXACT') {
+          sessionMemory.update({
+            activeCustomerId: match.customer.id,
+            activeCustomerName: match.customer.display_name
+          })
           const bal = customerBalances.get(match.customer.id)
           const balPaise = bal?.balance_paise || 0
           const speech = `${match.customer.display_name} ka total baaki ${formatINR(balPaise)} hai.`
@@ -264,7 +482,9 @@ export const VoiceKhataView: React.FC = () => {
         }
       }
 
-      // 3. Daily Credit: "Aaj kitna udhaar gaya?"
+      // =======================================================================
+      // Daily Credit / Payments
+      // =======================================================================
       if (intent.intent === 'QUERY_DAILY_CREDIT') {
         const speech = `Aaj ${formatSpokenINR(todayAggregates.total_credit_paise, language)} ka udhaar gaya hai.`
         setStatus('success')
@@ -272,7 +492,6 @@ export const VoiceKhataView: React.FC = () => {
         return
       }
 
-      // 4. Daily Payments: "Aaj kitna payment aaya?"
       if (intent.intent === 'QUERY_DAILY_PAYMENTS') {
         const speech = `Aaj ${formatSpokenINR(todayAggregates.total_payment_paise, language)} ka payment mila hai.`
         setStatus('success')
@@ -280,7 +499,24 @@ export const VoiceKhataView: React.FC = () => {
         return
       }
 
-      // 5. Financial Write: CREDIT or PAYMENT
+      // =======================================================================
+      // Explicit Create Customer: "Naya grahak Manoj Kumar jodo"
+      // =======================================================================
+      if (intent.intent === 'CREATE_CUSTOMER' && intent.customer_name) {
+        setNewCustomerPrompt({
+          name: intent.customer_name,
+          type: 'CREDIT',
+          amount_paise: 0
+        })
+        setStatus('confirm_create_customer')
+        const speech = `${intent.customer_name} ka naya khata kholna chahte hain?`
+        await speakResponse(speech, sttMs, intentMs, 0)
+        return
+      }
+
+      // =======================================================================
+      // Financial Write: CREDIT or PAYMENT
+      // =======================================================================
       if ((intent.intent === 'ADD_CREDIT' || intent.intent === 'RECORD_PAYMENT') && intent.amount_paise) {
         if (!intent.customer_name) {
           setStatus('clarification_required')
@@ -313,11 +549,18 @@ export const VoiceKhataView: React.FC = () => {
           return
         }
 
+        // =======================================================================
+        // ADVANCED FEATURE 3: Voice Customer Onboarding on Unknown Name
+        // =======================================================================
         if (match.type === 'NOT_FOUND') {
-          setStatus('clarification_required')
-          const msg = `${intent.customer_name} naam ka grahak naya hai. Kya naya grahak jodein?`
-          setErrorMessage(msg)
-          await speakResponse(msg, sttMs, intentMs, 0)
+          setStatus('confirm_create_customer')
+          setNewCustomerPrompt({
+            name: intent.customer_name,
+            amount_paise: intent.amount_paise,
+            type: intent.intent === 'ADD_CREDIT' ? 'CREDIT' : 'PAYMENT'
+          })
+          const prompt = `${intent.customer_name} naye grahak hain. Kya inka naya khata banayein?`
+          await speakResponse(prompt, sttMs, intentMs, 0)
           return
         }
       }
@@ -327,7 +570,20 @@ export const VoiceKhataView: React.FC = () => {
       setErrorMessage(fallbackMsg)
       await speakResponse(fallbackMsg, sttMs, intentMs, 0)
     },
-    [commitTransaction, customerBalances, customers, language, pendingDraft, speakResponse, t.voiceError, todayAggregates]
+    [
+      commitTransaction,
+      customerBalances,
+      customers,
+      inventoryItems,
+      language,
+      pendingDraft,
+      speakResponse,
+      t.voiceError,
+      todayAggregates,
+      transactions,
+      undoLastTransaction,
+      updateInventoryStock
+    ]
   )
 
   // Start Voice Capture
@@ -341,11 +597,11 @@ export const VoiceKhataView: React.FC = () => {
     setInterimTranscript('')
     setErrorMessage('')
     setDuplicateCandidates(null)
+    setNewCustomerPrompt(null)
     setStatus('listening')
 
     abortControllerRef.current = new AbortController()
 
-    // If using Gnani provider, start real audio recorder for audio payload
     if (providerType === 'gnani') {
       try {
         await audioRecorder.startRecording((volume) => setAudioVolume(volume))
@@ -380,99 +636,75 @@ export const VoiceKhataView: React.FC = () => {
     }
   }
 
-  // Stop Voice Capture
+  // End Voice Capture on button release
   const handleStopCapture = async () => {
-    setAudioVolume(0)
-    if (providerType === 'web-speech') {
-      webSpeechProvider.stopCapture()
-    } else if (providerType === 'gnani') {
+    if (status !== 'listening') return
+    if (providerType === 'gnani') {
       try {
-        const audioBlob = await audioRecorder.stopRecording()
-        // If Gnani provider needs the blob
-        if (status === 'listening') {
-          const provider = speechRegistry.getActiveProvider()
-          const res = await provider.streamTranscription({
-            audio: audioBlob,
-            language: language === 'en' ? 'en-IN' : 'hi-IN'
-          })
-          if (res.text) {
-            processTranscript(res.text, res.latencyMs)
-          }
-        }
-      } catch (err: any) {
-        console.warn('Gnani stop error:', err)
+        await audioRecorder.stopRecording()
+      } catch (e) {
+        // ignore
       }
     }
   }
 
-  // Cancel Operation
-  const handleCancel = () => {
-    setAudioVolume(0)
-    audioRecorder.abortRecording()
+  const handleCancelCapture = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
+      abortControllerRef.current = null
     }
-    if (providerType === 'web-speech') {
-      webSpeechProvider.stopCapture()
-    }
+    audioRecorder.abortRecording()
+    sessionMemory.clear()
+    setSessionActiveName(null)
     setStatus('idle')
     setPendingDraft(null)
     setDuplicateCandidates(null)
+    setNewCustomerPrompt(null)
+    setErrorMessage('')
     setInterimTranscript('')
   }
 
-  const handleSelectCandidate = async (candidate: Customer) => {
+  const handleSelectCandidate = (cand: Customer) => {
     if (parsedIntent && parsedIntent.amount_paise) {
       const draft: PendingDraft = {
-        customer: candidate,
-        type: parsedIntent.intent === 'RECORD_PAYMENT' ? 'PAYMENT' : 'CREDIT',
+        customer: cand,
+        type: parsedIntent.intent === 'ADD_CREDIT' ? 'CREDIT' : 'PAYMENT',
         amount_paise: parsedIntent.amount_paise,
         effective_date: parsedIntent.transaction_date || getTodayDateString(),
-        source_transcript: transcript
+        source_transcript: parsedIntent.source_transcript
       }
-      setPendingDraft(draft)
-      await commitTransaction(draft, 0, 0)
-    } else if (parsedIntent?.intent === 'QUERY_CUSTOMER_BALANCE') {
-      const bal = customerBalances.get(candidate.id)
-      const balPaise = bal?.balance_paise || 0
-      const speech = `${candidate.display_name} ka total baaki ${formatINR(balPaise)} hai.`
-      setStatus('success')
       setDuplicateCandidates(null)
-      await speakResponse(speech, 0, 0, 5)
+      commitTransaction(draft)
     }
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
-      {/* Top Header & Provider Switcher */}
-      <div className="bg-white rounded-3xl p-5 border border-[#E3E5E0] shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      {/* Top Controls: Provider Switcher + Active Features */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-[#E3E5E0] shadow-xs">
         <div>
-          <div className="flex items-center gap-2">
-            <Radio className="w-4 h-4 text-[#087F6E]" />
-            <h2 className="text-xs font-bold text-[#667085] uppercase tracking-wider">
-              स्पीच प्रोवाइडर (Speech Engine)
-            </h2>
-          </div>
-          <p className="text-sm font-bold text-[#17233B] mt-0.5">
-            {providerType === 'mock'
-              ? 'DEMO MODE: Mock Provider (Scripted Evaluation)'
-              : providerType === 'web-speech'
-              ? 'Browser Web Speech API (Live Microphone)'
-              : 'Gnani Prisma STT & Timbre TTS (Gateway)'}
+          <h1 className="text-lg font-bold text-[#17233B] flex items-center gap-2">
+            <span>{t.navVoiceKhata}</span>
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#087F6E]/15 text-[#087F6E]">
+              Gemini + Gnani
+            </span>
+          </h1>
+          <p className="text-xs text-[#667085]">
+            माइक दबाकर बोलें: "रमेश का 340 उधार" या "आज का हिसाब दिखाओ"
           </p>
         </div>
 
-        {/* Provider Switcher Tabs */}
-        <div className="flex p-1 bg-[#F8F7F2] rounded-xl border border-[#E3E5E0] text-xs font-bold">
+        {/* 3-Way Speech Provider Switcher */}
+        <div className="flex items-center gap-1 bg-[#F8F7F2] p-1 rounded-xl border border-[#E3E5E0] text-xs font-semibold self-stretch sm:self-auto">
           <button
             onClick={() => handleProviderChange('mock')}
             className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
               providerType === 'mock'
-                ? 'bg-[#253B73] text-white shadow-xs'
+                ? 'bg-white text-[#253B73] shadow-xs'
                 : 'text-[#667085] hover:text-[#17233B]'
             }`}
           >
-            Mock (Demo)
+            Demo Mock
           </button>
           <button
             onClick={() => handleProviderChange('web-speech')}
@@ -495,6 +727,35 @@ export const VoiceKhataView: React.FC = () => {
             Gnani Gateway
           </button>
         </div>
+      </div>
+
+      {/* Quick Feature Launchers Bar */}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => setIsClosingModalOpen(true)}
+          className="px-3 py-1.5 bg-white hover:bg-slate-50 text-[#253B73] text-xs font-bold rounded-xl border border-[#E3E5E0] shadow-xs transition cursor-pointer flex items-center gap-1.5"
+        >
+          <FileSpreadsheet className="w-3.5 h-3.5 text-[#087F6E]" />
+          <span>दैनिक रोकड़ (Daily Closing)</span>
+        </button>
+
+        <button
+          onClick={() => setIsAnalyticsModalOpen(true)}
+          className="px-3 py-1.5 bg-white hover:bg-slate-50 text-[#253B73] text-xs font-bold rounded-xl border border-[#E3E5E0] shadow-xs transition cursor-pointer flex items-center gap-1.5"
+        >
+          <PieChart className="w-3.5 h-3.5 text-[#E7A23B]" />
+          <span>व्यापार विश्लेषण (AI Analytics)</span>
+        </button>
+
+        {lastRecordedTx && (
+          <button
+            onClick={undoLastTransaction}
+            className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold rounded-xl border border-amber-300 shadow-xs transition cursor-pointer flex items-center gap-1.5"
+          >
+            <Undo2 className="w-3.5 h-3.5 text-amber-700" />
+            <span>पिछला हिसाब Undo करें</span>
+          </button>
+        )}
       </div>
 
       {/* Scripted Scenario Picker (Active when Mock Provider is selected) */}
@@ -526,6 +787,24 @@ export const VoiceKhataView: React.FC = () => {
 
       {/* Hero Push-To-Talk Microphone Section */}
       <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#E3E5E0] shadow-md flex flex-col items-center justify-center text-center relative overflow-hidden">
+        {/* Active Session Memory Badge (Feature 1) */}
+        {sessionActiveName && (
+          <div className="mb-3 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#253B73]/10 border border-[#253B73]/20 text-xs font-semibold text-[#253B73] animate-fade-in">
+            <span>👤 सक्रिय ग्राहक (Active Session): <strong>{sessionActiveName}</strong></span>
+            <span className="text-[10px] bg-[#253B73]/20 px-1.5 py-0.2 rounded-full font-mono">{sessionTimeLeft}s</span>
+            <button
+              onClick={() => {
+                sessionMemory.clear()
+                setSessionActiveName(null)
+              }}
+              className="p-0.5 hover:bg-[#253B73]/20 rounded-full cursor-pointer"
+              title="सत्र समाप्त करें"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        )}
+
         {/* State Label Banner */}
         <div className="mb-2">
           {status === 'idle' && (
@@ -553,150 +832,156 @@ export const VoiceKhataView: React.FC = () => {
               {t.voiceClarification}
             </span>
           )}
+          {status === 'confirm_create_customer' && (
+            <span className="text-xs font-bold text-[#E7A23B] uppercase tracking-wider">
+              नया ग्राहक पुष्टि आवश्यक
+            </span>
+          )}
           {status === 'saving' && (
             <span className="text-xs font-bold text-[#253B73] uppercase tracking-wider">
               {t.voiceSaving}
             </span>
           )}
           {status === 'success' && (
-            <span className="text-xs font-bold text-[#16794B] uppercase tracking-wider">
-              ✓ {t.voiceSuccess}
+            <span className="text-xs font-bold text-[#16794B] uppercase tracking-wider flex items-center justify-center gap-1">
+              <CheckCircle2 className="w-4 h-4" />
+              {t.voiceSuccess}
             </span>
           )}
           {status === 'error' && (
-            <span className="text-xs font-bold text-[#B42318] uppercase tracking-wider">
-              {t.voiceError}
+            <span className="text-xs font-bold text-[#B42318] uppercase tracking-wider flex items-center justify-center gap-1">
+              <AlertTriangle className="w-4 h-4" />
+              {errorMessage || t.voiceError}
             </span>
           )}
           {status === 'offline' && (
-            <span className="text-xs font-bold text-amber-700 uppercase tracking-wider">
+            <span className="text-xs font-bold text-[#667085] uppercase tracking-wider">
               {t.voiceOffline}
             </span>
           )}
         </div>
 
-        {/* Hero Push-To-Talk Button */}
-        <PushToTalkButton
-          status={status}
-          onStartCapture={handleStartCapture}
-          onStopCapture={handleStopCapture}
-          disabled={!isOnline && providerType !== 'mock'}
-        />
-
-        {/* Audio Waveform with dynamic volume */}
-        <AudioWaveform
-          isListening={status === 'listening'}
-          isProcessing={status === 'processing' || status === 'understanding'}
-          volume={audioVolume}
-        />
-
-        {/* Interim / Streaming Text Preview */}
-        {interimTranscript && (
-          <div className="mt-2 text-sm font-semibold text-[#087F6E] italic animate-pulse">
-            “{interimTranscript}”
-          </div>
-        )}
-
-        {/* Keyboard shortcut hint & cancel button */}
-        <div className="flex items-center gap-3 mt-3">
-          <p className="text-[11px] text-[#667085]">
-            डेस्कटॉप पर <kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded text-[10px] font-mono">Spacebar</kbd> दबाकर रखें
-          </p>
-          {(status === 'listening' || status === 'clarification_required' || pendingDraft) && (
-            <button
-              onClick={handleCancel}
-              className="text-xs font-bold text-[#B42318] hover:underline cursor-pointer"
-            >
-              रद्द करें (Cancel)
-            </button>
-          )}
+        {/* Audio Waveform visualization */}
+        <div className="h-10 flex items-center justify-center mb-4">
+          <AudioWaveform isListening={status === 'listening'} volume={audioVolume} />
         </div>
 
-        {/* Latency Measurement & Target Validation Badge */}
-        {latencyBreakdown && (
-          <div className="mt-4 p-3 bg-slate-50 border border-[#E3E5E0] rounded-2xl text-xs max-w-md w-full">
-            <div className="flex items-center justify-between font-bold text-[#253B73] mb-1">
-              <span className="flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5 text-[#087F6E]" />
-                कुल लेटेंसी (End-to-End Latency):
-              </span>
-              <span className="text-sm font-black text-[#087F6E]">
-                {latencyBreakdown.totalMs} ms
-              </span>
-            </div>
-            <div className="grid grid-cols-4 gap-1 text-[10px] text-[#667085] text-center pt-1 border-t border-slate-200">
-              <div>
-                <span className="block font-semibold">STT</span>
-                <span>{latencyBreakdown.sttMs}ms</span>
-              </div>
-              <div>
-                <span className="block font-semibold">Intent</span>
-                <span>{latencyBreakdown.intentMs}ms</span>
-              </div>
-              <div>
-                <span className="block font-semibold">Ledger</span>
-                <span>{latencyBreakdown.ledgerMs}ms</span>
-              </div>
-              <div>
-                <span className="block font-semibold">TTS</span>
-                <span>{latencyBreakdown.ttsMs}ms</span>
-              </div>
-            </div>
-            <p className="text-[10px] text-center text-emerald-700 font-bold mt-1.5">
-              ✓ 2-सेकंड लक्ष्य प्राप्त (&lt; 2.0s Spoken Answer Benchmark Passed)
-            </p>
-          </div>
+        {/* Hero Push-To-Talk Button */}
+        <div className="relative my-2">
+          <PushToTalkButton
+            status={status}
+            onStartCapture={handleStartCapture}
+            onStopCapture={handleStopCapture}
+            onCancelCapture={handleCancelCapture}
+          />
+        </div>
+
+        <p className="text-xs text-[#667085] mt-4 max-w-sm">
+          {status === 'listening'
+            ? 'बोलना समाप्त करने के लिए बटन छोड़ें'
+            : 'माइक दबाकर रखें और अपनी भाषा (हिंदी / Hinglish) में बोलें'}
+        </p>
+
+        {status === 'listening' && (
+          <button
+            onClick={handleCancelCapture}
+            className="mt-3 text-xs text-red-600 hover:text-red-700 font-semibold flex items-center gap-1 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+            <span>रद्द करें (Cancel)</span>
+          </button>
         )}
       </div>
 
-      {/* Live Transcript & Spoken Response Card */}
-      {(transcript || lastSpokenResponse || errorMessage) && (
-        <div className="bg-white rounded-2xl p-5 border border-[#E3E5E0] shadow-xs space-y-3 animate-fade-in">
-          {transcript && (
-            <div>
-              <span className="text-[11px] font-bold text-[#667085] uppercase tracking-wider block mb-1">
-                पहचाना गया कथन (Recognized Speech):
+      {/* Live Interim / Final Transcript Card */}
+      {(transcript || interimTranscript) && (
+        <div className="bg-white rounded-2xl p-5 border border-[#E3E5E0] shadow-xs space-y-2 animate-fade-in">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-[#667085] uppercase tracking-wider flex items-center gap-1.5">
+              <Mic className="w-3.5 h-3.5 text-[#087F6E]" />
+              आपकी आवाज़ (Transcript)
+            </span>
+            {latencyBreakdown && (
+              <span className="text-[11px] font-semibold text-[#087F6E]">
+                कुल समय: {latencyBreakdown.totalMs}ms
               </span>
-              <p className="text-base font-semibold text-[#17233B] bg-[#F8F7F2] p-3 rounded-xl border border-[#E3E5E0]">
-                “{transcript}”
-              </p>
-            </div>
-          )}
-
-          {lastSpokenResponse && (
-            <div className="pt-2 border-t border-[#E3E5E0]/60 flex items-start gap-2.5">
-              <div className="w-8 h-8 rounded-full bg-[#087F6E]/10 flex items-center justify-center text-[#087F6E] shrink-0 mt-0.5">
-                <Volume2 className="w-4 h-4" />
-              </div>
-              <div>
-                <span className="text-[11px] font-bold text-[#087F6E] uppercase tracking-wider block">
-                  खाताAI उत्तर (Spoken Response):
-                </span>
-                <p className="text-sm font-semibold text-[#087F6E] mt-0.5">
-                  “{lastSpokenResponse}”
-                </p>
-              </div>
-            </div>
-          )}
-
-          {errorMessage && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800 flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              <span>{errorMessage}</span>
-            </div>
-          )}
+            )}
+          </div>
+          <p className="text-lg font-bold text-[#17233B] leading-relaxed">
+            "{transcript || interimTranscript}"
+          </p>
         </div>
       )}
 
-      {/* Duplicate Customer Disambiguation Card */}
+      {/* Voice Customer Creation Confirmation Card (Feature 3) */}
+      {newCustomerPrompt && (
+        <div className="bg-amber-50 rounded-2xl p-5 border border-amber-300 shadow-sm space-y-3 animate-fade-in">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+              <UserPlus className="w-4 h-4 text-amber-700" />
+              नया ग्राहक जोड़ें (Create New Customer)
+            </span>
+            <span className="text-xs text-[#667085]">पुष्टि आवश्यक</span>
+          </div>
+
+          <p className="text-sm font-semibold text-[#17233B]">
+            "<strong>{newCustomerPrompt.name}</strong>" नाम का कोई ग्राहक पहले से दर्ज नहीं है। क्या इनका नया खाता खोलें?
+          </p>
+
+          {newCustomerPrompt.amount_paise && newCustomerPrompt.amount_paise > 0 && (
+            <div className="text-xs bg-white p-2.5 rounded-xl border border-amber-200 flex justify-between">
+              <span>शुरुआती रकम:</span>
+              <span className="font-bold text-[#B42318]">
+                {formatINR(newCustomerPrompt.amount_paise)} ({newCustomerPrompt.type === 'CREDIT' ? 'उधार' : 'जमा'})
+              </span>
+            </div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={handleConfirmNewCustomer}
+              className="flex-1 py-2.5 px-4 bg-[#087F6E] hover:bg-[#066154] text-white text-xs font-bold rounded-xl shadow-xs transition cursor-pointer flex items-center justify-center gap-1.5"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>हाँ, नया खाता खोलें</span>
+            </button>
+            <button
+              onClick={() => {
+                setNewCustomerPrompt(null)
+                setStatus('idle')
+              }}
+              className="py-2.5 px-4 bg-white hover:bg-slate-100 text-[#667085] text-xs font-semibold rounded-xl border border-[#E3E5E0] transition cursor-pointer"
+            >
+              रद्द करें
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Spoken Response Banner */}
+      {lastSpokenResponse && (
+        <div className="bg-[#087F6E]/10 rounded-2xl p-4 border border-[#087F6E]/20 flex items-start gap-3 animate-fade-in">
+          <Volume2 className="w-5 h-5 text-[#087F6E] shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <span className="text-[11px] font-bold text-[#087F6E] uppercase tracking-wider block">
+              खाताAI उत्तर (Spoken Output)
+            </span>
+            <p className="text-sm font-semibold text-[#17233B] mt-0.5">
+              {lastSpokenResponse}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Duplicate Candidates Disambiguation */}
       {duplicateCandidates && duplicateCandidates.length > 0 && (
         <div className="bg-amber-50 rounded-2xl p-5 border border-amber-300 shadow-xs space-y-3 animate-fade-in">
           <div className="flex items-center gap-2 text-amber-900 font-bold text-sm">
-            <UserCheck className="w-5 h-5 text-amber-700" />
-            <span>समान नाम के {duplicateCandidates.length} ग्राहक मिले (Disambiguation):</span>
+            <AlertTriangle className="w-5 h-5 text-amber-700" />
+            <span>ग्राहक का चयन करें (Select Matching Customer):</span>
           </div>
           <p className="text-xs text-amber-800">
-            कृपया सही ग्राहक चुनें:
+            इस नाम के एक से अधिक ग्राहक हैं। सही ग्राहक पर क्लिक करें:
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
@@ -805,7 +1090,7 @@ export const VoiceKhataView: React.FC = () => {
                 setTestInput('')
               }
             }}
-            placeholder="उदा. 'Ramesh ka 340 udhaar' या 'Nahi, 430'..."
+            placeholder="उदा. 'Ramesh ka 340 udhaar' या 'Usne 100 diye' या 'Nahi, 430'..."
             className="flex-1 px-3.5 py-2 text-sm bg-[#F8F7F2] border border-[#E3E5E0] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#253B73]"
           />
           <button
@@ -821,6 +1106,22 @@ export const VoiceKhataView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Modals for Advanced Enhancements */}
+      <DailyClosingModal
+        isOpen={isClosingModalOpen}
+        onClose={() => setIsClosingModalOpen(false)}
+        transactions={transactions}
+        customers={customers}
+        shop={shop}
+      />
+
+      <AnalyticsModal
+        isOpen={isAnalyticsModalOpen}
+        onClose={() => setIsAnalyticsModalOpen(false)}
+        transactions={transactions}
+        customers={customers}
+      />
     </div>
   )
 }
