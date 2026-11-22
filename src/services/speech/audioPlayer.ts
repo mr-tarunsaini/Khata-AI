@@ -1,75 +1,86 @@
 /**
- * Shared Web Audio Player for KhataAI
+ * Unlocked Audio Player Service for KhataAI
  * 
- * Solves browser autoplay policy blocks by maintaining an unlocked AudioContext
- * activated on user gestures (mic push, click, keydown).
- * Plays WAV/MP3 audio buffers with zero latency and fallback support.
+ * Solves browser autoplay policy restrictions and guarantees audible speech:
+ * 1. Initialized/unlocked on user gesture (pointerdown/click/space)
+ * 2. Plays synthesized WAV audio directly through Web Audio API (AudioBufferSourceNode)
+ * 3. 3-tier fallback strategy:
+ *    - Tier 1: Web Audio API AudioBufferSourceNode (unlocked, zero-latency, immune to autoplay blocks)
+ *    - Tier 2: HTMLAudioElement with Blob URL
+ *    - Tier 3: Browser SpeechSynthesis (native device voice)
  */
 
-class SoundPlayer {
-  private audioCtx: AudioContext | null = null
-
-  getAudioContext(): AudioContext {
-    if (!this.audioCtx || this.audioCtx.state === 'closed') {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext
-      this.audioCtx = new AudioContextClass()
-    }
-    return this.audioCtx
-  }
+class AudioPlayerService {
+  private audioContext: AudioContext | null = null
 
   /**
-   * Must be called synchronously during a user interaction (pointerdown, touchstart, keydown)
-   * to unlock Web Audio playback for the remainder of the session.
+   * Permanently unlocks Web Audio playback in the active tab during user gesture.
    */
   unlock(): void {
     if (typeof window === 'undefined') return
     try {
-      const ctx = this.getAudioContext()
-      if (ctx.state === 'suspended') {
-        ctx.resume().catch(() => {})
+      if (!this.audioContext) {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+        this.audioContext = new AudioCtx()
       }
-    } catch {
-      // ignore
+      if (this.audioContext.state === 'suspended') {
+        this.audioContext.resume()
+      }
+    } catch (e) {
+      console.warn('AudioContext unlock warning:', e)
     }
   }
 
+  getAudioContext(): AudioContext | null {
+    if (typeof window === 'undefined') return null
+    if (!this.audioContext) {
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+        this.audioContext = new AudioCtx()
+      } catch {
+        // ignore
+      }
+    }
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+      this.audioContext.resume().catch(() => {})
+    }
+    return this.audioContext
+  }
+
   /**
-   * Plays an audio ArrayBuffer (WAV, MP3) using Web Audio API AudioBufferSourceNode.
-   * This bypasses HTML5 media autoplay restrictions once unlocked.
+   * Plays an audio ArrayBuffer reliably across all browser environments.
    */
-  async playBuffer(buffer: ArrayBuffer): Promise<void> {
-    this.unlock()
+  async playBuffer(arrayBuffer: ArrayBuffer, fallbackText?: string, language: string = 'hi-IN'): Promise<void> {
+    // Strategy 1: Web Audio API (Permanent unlock, bypasses 5-second transient activation limit)
     const ctx = this.getAudioContext()
+    if (ctx) {
+      try {
+        if (ctx.state === 'suspended') {
+          await ctx.resume()
+        }
+        // decodeAudioData needs a detached copy of the array buffer
+        const bufferCopy = arrayBuffer.slice(0)
+        const audioBuffer = await ctx.decodeAudioData(bufferCopy)
 
-    if (ctx.state === 'suspended') {
-      await ctx.resume().catch(() => {})
+        return new Promise<void>((resolve) => {
+          const source = ctx.createBufferSource()
+          source.buffer = audioBuffer
+          source.connect(ctx.destination)
+          source.onended = () => resolve()
+          source.start(0)
+        })
+      } catch (err) {
+        console.warn('Web Audio decode failed, falling back to HTMLAudioElement:', err)
+      }
     }
 
-    // decodeAudioData detaches the buffer, so slice a copy
-    const copy = buffer.slice(0)
-    const audioBuffer = await ctx.decodeAudioData(copy)
-
-    return new Promise((resolve) => {
-      const source = ctx.createBufferSource()
-      source.buffer = audioBuffer
-      source.connect(ctx.destination)
-      source.onended = () => resolve()
-      source.start(0)
-    })
-  }
-
-  /**
-   * Plays an audio Blob, attempting Web Audio API first and falling back to HTML5 Audio element.
-   */
-  async playBlob(blob: Blob): Promise<void> {
+    // Strategy 2: HTMLAudioElement with Blob URL
     try {
-      const buf = await blob.arrayBuffer()
-      await this.playBuffer(buf)
-    } catch {
-      // Fallback to HTML5 audio element
+      const blob = new Blob([arrayBuffer], { type: 'audio/wav' })
       const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+
       await new Promise<void>((resolve, reject) => {
-        const audio = new Audio(url)
         audio.onended = () => {
           URL.revokeObjectURL(url)
           resolve()
@@ -80,8 +91,41 @@ class SoundPlayer {
         }
         audio.play().catch(reject)
       })
+      return
+    } catch (err) {
+      console.warn('HTMLAudioElement play failed, falling back to speech synthesis:', err)
+    }
+
+    // Strategy 3: Browser SpeechSynthesis Native Fallback
+    if (fallbackText) {
+      this.speakBrowser(fallbackText, language)
+    }
+  }
+
+  /**
+   * Native device speech synthesis fallback
+   */
+  speakBrowser(text: string, language: string = 'hi-IN'): void {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return
+    try {
+      window.speechSynthesis.cancel()
+      window.speechSynthesis.resume()
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.lang = language === 'en' ? 'en-IN' : 'hi-IN'
+      utterance.rate = 1.05
+
+      const voices = window.speechSynthesis.getVoices()
+      const indicVoice = voices.find(
+        (v) =>
+          (language !== 'en' && (v.lang.includes('hi') || v.name.toLowerCase().includes('hindi'))) ||
+          (language === 'en' && (v.lang.includes('en-IN') || v.lang.startsWith('en')))
+      )
+      if (indicVoice) utterance.voice = indicVoice
+      window.speechSynthesis.speak(utterance)
+    } catch (err) {
+      console.error('SpeechSynthesis fallback error:', err)
     }
   }
 }
 
-export const soundPlayer = new SoundPlayer()
+export const audioPlayer = new AudioPlayerService()

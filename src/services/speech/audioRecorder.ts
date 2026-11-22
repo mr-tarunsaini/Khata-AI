@@ -6,12 +6,9 @@
  * 
  * Provides:
  * - Real 16kHz 16-bit mono WAV Blob generation (supported by Gnani STT)
- * - Ultra-fast buffer processing (1024 samples = ~64ms latency)
- * - Persistent AudioContext to eliminate hardware spin-up delays
  * - Live volume level metering (0-100) for real-time waveform visualization
+ * - Clean teardown of media tracks and audio contexts
  */
-
-import { soundPlayer } from './audioPlayer'
 
 function writeString(view: DataView, offset: number, string: string): void {
   for (let i = 0; i < string.length; i++) {
@@ -81,12 +78,8 @@ export class AudioRecorder {
       throw new Error('Microphone access is not supported in this browser environment.')
     }
 
-    // Unlock sound player on user gesture
-    soundPlayer.unlock()
-
-    // Request or reuse 16kHz mono microphone stream
-    const isStreamActive = this.mediaStream?.getAudioTracks().some((t) => t.readyState === 'live')
-    if (!isStreamActive) {
+    // Re-use active media stream if available for instant 0ms latency
+    if (!this.mediaStream || !this.mediaStream.active) {
       this.mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
@@ -100,19 +93,17 @@ export class AudioRecorder {
 
     this.pcmChunks = []
 
-    if (!this.audioContext || this.audioContext.state === 'closed') {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext
-      this.audioContext = new AudioContextClass({ sampleRate: 16000 })
-    }
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext
+    this.audioContext = new AudioContextClass({ sampleRate: 16000 })
 
     if (this.audioContext.state === 'suspended') {
-      await this.audioContext.resume().catch(() => {})
+      await this.audioContext.resume()
     }
 
-    const source = this.audioContext.createMediaStreamSource(this.mediaStream!)
+    const source = this.audioContext.createMediaStreamSource(this.mediaStream)
 
-    // Fast buffer size (1024 samples = ~64ms latency)
-    const bufferSize = 1024
+    // ScriptProcessorNode captures raw PCM floats directly from mic
+    const bufferSize = 4096
     this.scriptProcessor = this.audioContext.createScriptProcessor(bufferSize, 1, 1)
     this.scriptProcessor.onaudioprocess = (event: AudioProcessingEvent) => {
       const channelData = event.inputBuffer.getChannelData(0)
@@ -171,6 +162,17 @@ export class AudioRecorder {
 
     const sampleRate = this.audioContext?.sampleRate || 16000
 
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      try {
+        await this.audioContext.close()
+      } catch {
+        // ignore
+      }
+      this.audioContext = null
+    }
+
+    this.cleanup()
+
     // Calculate total PCM samples captured
     let totalLength = 0
     for (const chunk of this.pcmChunks) {
@@ -209,11 +211,26 @@ export class AudioRecorder {
       }
       this.scriptProcessor = null
     }
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      try {
+        this.audioContext.close()
+      } catch {
+        // ignore
+      }
+      this.audioContext = null
+    }
     this.pcmChunks = []
     this.cleanup()
   }
 
   private cleanup(): void {
+    this.analyser = null
+  }
+
+  /**
+   * Fully releases hardware microphone tracks
+   */
+  public releaseMicrophone(): void {
     if (this.mediaStream) {
       this.mediaStream.getTracks().forEach((track) => track.stop())
       this.mediaStream = null

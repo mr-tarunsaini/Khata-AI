@@ -3,6 +3,7 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import { Customer, LedgerTransaction, Shop } from '@/types/ledger'
 import { AnalyticsService } from '@/services/ledger/analyticsService'
 import { speechRegistry } from '@/services/speech/speechRegistry'
+import { audioPlayer } from '@/services/speech/audioPlayer'
 import { formatINR } from '@/lib/money'
 import { getTodayDateString } from '@/lib/dates'
 import {
@@ -42,6 +43,7 @@ export const DailyClosingModal: React.FC<DailyClosingModalProps> = ({
   const isNetCreditIncrease = report.net_delta_paise >= 0
 
   const handleSpeakSummary = async () => {
+    audioPlayer.unlock()
     setIsSpeaking(true)
     try {
       const provider = speechRegistry.getActiveProvider()

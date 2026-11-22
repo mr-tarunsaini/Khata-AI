@@ -3,6 +3,7 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import { Customer, LedgerTransaction } from '@/types/ledger'
 import { AnalyticsService } from '@/services/ledger/analyticsService'
 import { speechRegistry } from '@/services/speech/speechRegistry'
+import { audioPlayer } from '@/services/speech/audioPlayer'
 import { formatINR } from '@/lib/money'
 import {
   TrendingUp,
@@ -37,6 +38,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
   const analytics = AnalyticsService.calculateBusinessAnalytics(transactions, customers)
 
   const handleSpeakOverview = async () => {
+    audioPlayer.unlock()
     setIsSpeaking(true)
     const text =
       language === 'en'

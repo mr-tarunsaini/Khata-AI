@@ -12,6 +12,7 @@ import { ActiveProviderType } from '@/services/speech/SpeechProvider'
 import { SCRIPTED_DEMO_SCENARIOS, mockSpeechProvider } from '@/services/speech/MockSpeechProvider'
 import { webSpeechProvider } from '@/services/speech/WebSpeechProvider'
 import { audioRecorder } from '@/services/speech/audioRecorder'
+import { audioPlayer } from '@/services/speech/audioPlayer'
 import { parseIntentFromTranscript } from '@/services/parser/intentParser'
 import { resolveCustomer, buildDuplicateClarificationPrompt } from '@/services/ledger/customerResolver'
 import { sessionMemory } from '@/services/voice/voiceSessionMemory'
@@ -285,21 +286,17 @@ export const VoiceKhataView: React.FC = () => {
       const intentStart = performance.now()
       setStatus('understanding')
 
-      // 1. Fast deterministic rule-based Kirana parser (< 1ms instant resolution)
-      let intent: ParsedVoiceIntent = parseIntentFromTranscript(cleanText, Boolean(pendingDraft))
+      // 1. Instant deterministic rule-based parsing (0ms latency, zero delay)
+      let intent = parseIntentFromTranscript(cleanText, Boolean(pendingDraft))
 
-      // 2. Only consult Gemini API via Gateway if rule parser cannot recognize intent with high confidence
-      if (intent.intent === 'CLARIFY' || intent.confidence < 0.75) {
+      // 2. Only if ambiguous or uncertain (confidence < 0.85 or intent === 'CLARIFY'), query Gemini LLM as advanced fallback
+      if ((intent.intent === 'CLARIFY' || intent.confidence < 0.85) && isOnline) {
         try {
-          const controller = new AbortController()
-          const timer = setTimeout(() => controller.abort(), 2000)
           const geminiRes = await fetch('/api/voice/intent', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ transcript: cleanText, hasPendingDraft: Boolean(pendingDraft) }),
-            signal: controller.signal
+            body: JSON.stringify({ transcript: cleanText, hasPendingDraft: Boolean(pendingDraft) })
           })
-          clearTimeout(timer)
           const geminiData = await geminiRes.json()
           if (geminiData && !geminiData.fallbackToRuleParser && geminiData.intent && geminiData.intent !== 'CLARIFY') {
             intent = {
@@ -616,6 +613,9 @@ export const VoiceKhataView: React.FC = () => {
     setStatus('listening')
 
     abortControllerRef.current = new AbortController()
+
+    // Unlock Web Audio API on user interaction so subsequent TTS playback is never blocked
+    audioPlayer.unlock()
 
     // Gnani Provider records raw microphone audio while button is held
     if (providerType === 'gnani') {

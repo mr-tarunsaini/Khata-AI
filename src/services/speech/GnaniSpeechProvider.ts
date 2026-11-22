@@ -1,5 +1,5 @@
 import { SpeechProvider, TranscriptionInput, TranscriptionOutput, SynthesizeInput, SynthesizeOutput } from './SpeechProvider'
-import { soundPlayer } from './audioPlayer'
+import { audioPlayer } from './audioPlayer'
 
 export interface GnaniProviderConfig {
   gatewayUrl?: string
@@ -119,39 +119,28 @@ export class GnaniSpeechProvider implements SpeechProvider {
 
       clearTimeout(timeout)
 
-      // If gateway returns 204 No Content (meaning credentials not yet set, fall back to browser TTS)
       if (response.status === 204 || !response.ok) {
         return this.synthesizeWithBrowserFallback(input, startTime)
       }
 
       const contentType = response.headers.get('content-type') || ''
       if (contentType.includes('application/json')) {
-        const jsonData = await response.json().catch(() => ({}))
-        if (jsonData.fallbackToSpeechSynthesis) {
-          return this.synthesizeWithBrowserFallback(input, startTime)
-        }
-      }
-
-      const audioBlob = await response.blob()
-      if (audioBlob.size === 0) {
         return this.synthesizeWithBrowserFallback(input, startTime)
       }
 
-      const audioUrl = URL.createObjectURL(audioBlob)
+      const audioArrayBuffer = await response.arrayBuffer()
+      if (audioArrayBuffer.byteLength === 0) {
+        return this.synthesizeWithBrowserFallback(input, startTime)
+      }
+
       const latencyMs = Math.round(performance.now() - startTime)
 
       const play = async (): Promise<void> => {
-        try {
-          await soundPlayer.playBlob(audioBlob)
-        } catch (e) {
-          console.warn('Web Audio playback failed, falling back to speech synthesis:', e)
-          await this.speakBrowserUtterance(input.text, input.language)
-        }
+        await audioPlayer.playBuffer(audioArrayBuffer, input.text, input.language)
       }
 
       return {
-        audioBlob,
-        audioUrl,
+        audioBuffer: audioArrayBuffer,
         latencyMs,
         provider: 'Gnani Timbre TTS',
         play
@@ -161,40 +150,9 @@ export class GnaniSpeechProvider implements SpeechProvider {
     }
   }
 
-  private async speakBrowserUtterance(text: string, language: string): Promise<void> {
-    if (typeof window === 'undefined' || !window.speechSynthesis) return
-    window.speechSynthesis.cancel()
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.lang = language === 'en' ? 'en-IN' : 'hi-IN'
-    utterance.rate = 1.05
-
-    const voices = window.speechSynthesis.getVoices()
-    const indicVoice = voices.find(
-      (v) =>
-        (language !== 'en' && (v.lang.includes('hi') || v.name.toLowerCase().includes('hindi'))) ||
-        (language === 'en' && (v.lang.includes('en-IN') || v.lang.startsWith('en')))
-    )
-    if (indicVoice) utterance.voice = indicVoice
-    window.speechSynthesis.speak(utterance)
-  }
-
   private synthesizeWithBrowserFallback(input: SynthesizeInput, startTime: number): SynthesizeOutput {
     const play = async (): Promise<void> => {
-      if (typeof window !== 'undefined' && window.speechSynthesis) {
-        window.speechSynthesis.cancel()
-        const utterance = new SpeechSynthesisUtterance(input.text)
-        utterance.lang = input.language === 'en' ? 'en-IN' : 'hi-IN'
-        utterance.rate = 1.05
-
-        const voices = window.speechSynthesis.getVoices()
-        const indicVoice = voices.find(
-          (v) =>
-            (input.language !== 'en' && (v.lang.includes('hi') || v.name.toLowerCase().includes('hindi'))) ||
-            (input.language === 'en' && (v.lang.includes('en-IN') || v.lang.startsWith('en')) )
-        )
-        if (indicVoice) utterance.voice = indicVoice
-        window.speechSynthesis.speak(utterance)
-      }
+      audioPlayer.speakBrowser(input.text, input.language)
     }
 
     const latencyMs = Math.round(performance.now() - startTime)
