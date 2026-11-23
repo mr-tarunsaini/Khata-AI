@@ -106,6 +106,7 @@ export const VoiceKhataView: React.FC = () => {
   const [sessionTimeLeft, setSessionTimeLeft] = useState<number>(0)
 
   const abortControllerRef = useRef<AbortController | null>(null)
+  const recordingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Check active session memory every second
   useEffect(() => {
@@ -585,6 +586,11 @@ export const VoiceKhataView: React.FC = () => {
       return
     }
 
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current)
+      recordingTimerRef.current = null
+    }
+
     setTranscript('')
     setInterimTranscript('')
     setErrorMessage('')
@@ -597,6 +603,11 @@ export const VoiceKhataView: React.FC = () => {
     // Unlock Web Audio API on user interaction so subsequent TTS playback is never blocked
     audioPlayer.unlock()
 
+    // Safety auto-stop after 15 seconds to ensure recordings never exceed Gnani's 30s threshold
+    recordingTimerRef.current = setTimeout(() => {
+      handleStopCapture()
+    }, 15000)
+
     try {
       await audioRecorder.startRecording((volume) => setAudioVolume(volume))
     } catch (e: any) {
@@ -608,6 +619,11 @@ export const VoiceKhataView: React.FC = () => {
 
   // End Voice Capture on button release
   const handleStopCapture = async () => {
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current)
+      recordingTimerRef.current = null
+    }
+
     if (status !== 'listening') return
 
     try {
@@ -632,7 +648,7 @@ export const VoiceKhataView: React.FC = () => {
         signal: abortControllerRef.current?.signal
       })
 
-      if (result.text) {
+      if (result.text && result.text.trim()) {
         processTranscript(result.text, result.latencyMs)
       } else {
         setStatus('idle')
@@ -648,6 +664,10 @@ export const VoiceKhataView: React.FC = () => {
   }
 
   const handleCancelCapture = () => {
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current)
+      recordingTimerRef.current = null
+    }
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
       abortControllerRef.current = null

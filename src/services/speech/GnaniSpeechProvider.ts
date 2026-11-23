@@ -64,7 +64,14 @@ export class GnaniSpeechProvider implements SpeechProvider {
 
         if (!response.ok) {
           const errData = await response.json().catch(() => ({ message: response.statusText }))
-          throw new Error(`Gnani Gateway STT error (${response.status}): ${errData.message || response.statusText}`)
+          console.warn(`Gnani Gateway STT notice (${response.status}):`, errData.message || response.statusText)
+          return {
+            text: '',
+            language: input.language,
+            confidence: 0,
+            latencyMs: Math.round(performance.now() - startTime),
+            provider: 'Gnani Prisma Streaming STT'
+          }
         }
 
         const data = await response.json()

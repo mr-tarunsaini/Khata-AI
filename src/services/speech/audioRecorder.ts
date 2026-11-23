@@ -17,6 +17,37 @@ function writeString(view: DataView, offset: number, string: string): void {
 }
 
 /**
+ * Resamples Float32Array PCM samples from originalSampleRate to exactly 16,000 Hz.
+ * Uses high-quality linear interpolation with anti-aliasing averaging for downsampling.
+ */
+export function resampleTo16k(audioBuffer: Float32Array, originalSampleRate: number): Float32Array {
+  if (originalSampleRate === 16000) {
+    return audioBuffer
+  }
+
+  const ratio = originalSampleRate / 16000
+  const newLength = Math.round(audioBuffer.length / ratio)
+  const result = new Float32Array(newLength)
+  let offsetResult = 0
+  let offsetBuffer = 0
+
+  while (offsetResult < result.length) {
+    const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio)
+    let accum = 0
+    let count = 0
+    for (let i = offsetBuffer; i < nextOffsetBuffer && i < audioBuffer.length; i++) {
+      accum += audioBuffer[i]
+      count++
+    }
+    result[offsetResult] = count > 0 ? accum / count : (audioBuffer[offsetBuffer] || 0)
+    offsetResult++
+    offsetBuffer = nextOffsetBuffer
+  }
+
+  return result
+}
+
+/**
  * Encodes Float32Array audio samples into a standard 16-bit linear PCM WAV Blob
  */
 export function encodeWAVBlob(samples: Float32Array, sampleRate: number = 16000): Blob {
@@ -181,7 +212,7 @@ export class AudioRecorder {
     }
 
     if (totalLength === 0) {
-      return encodeWAVBlob(new Float32Array(0), sampleRate)
+      return encodeWAVBlob(new Float32Array(0), 16000)
     }
 
     // Merge chunks into a single Float32Array
@@ -193,7 +224,17 @@ export class AudioRecorder {
     }
 
     this.pcmChunks = []
-    return encodeWAVBlob(merged, sampleRate)
+
+    // Downsample to exactly 16kHz for Gnani Prisma STT
+    let samples16k = resampleTo16k(merged, sampleRate)
+
+    // Hard ceiling: Cap audio at 20 seconds (320,000 samples @ 16kHz) to strictly avoid Gnani 30s limit (400)
+    const MAX_16K_SAMPLES = 16000 * 20
+    if (samples16k.length > MAX_16K_SAMPLES) {
+      samples16k = samples16k.subarray(0, MAX_16K_SAMPLES)
+    }
+
+    return encodeWAVBlob(samples16k, 16000)
   }
 
   /**

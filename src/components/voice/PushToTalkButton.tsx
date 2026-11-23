@@ -17,11 +17,34 @@ export const PushToTalkButton: React.FC<PushToTalkButtonProps> = ({
   disabled = false
 }) => {
   const isPressingRef = useRef(false)
+  const pressStartTimeRef = useRef(0)
+  const isToggleActiveRef = useRef(false)
+
+  // Reset toggle state when not listening
+  useEffect(() => {
+    if (status !== 'listening') {
+      isToggleActiveRef.current = false
+      isPressingRef.current = false
+    }
+  }, [status])
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (disabled) return
     e.preventDefault()
+
+    // If currently listening in toggle-mode, tapping stops capture
+    if (status === 'listening' && isToggleActiveRef.current) {
+      isToggleActiveRef.current = false
+      isPressingRef.current = false
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate(20)
+      }
+      onStopCapture()
+      return
+    }
+
     isPressingRef.current = true
+    pressStartTimeRef.current = Date.now()
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
       navigator.vibrate(40)
     }
@@ -31,8 +54,19 @@ export const PushToTalkButton: React.FC<PushToTalkButtonProps> = ({
   const handlePointerUp = (e: React.PointerEvent) => {
     if (disabled) return
     e.preventDefault()
+
     if (isPressingRef.current) {
+      const duration = Date.now() - pressStartTimeRef.current
       isPressingRef.current = false
+
+      // If user tapped quickly (< 350ms), stay in listening mode (toggle mode)
+      if (duration < 350) {
+        isToggleActiveRef.current = true
+        return
+      }
+
+      // If held down > 350ms, stop capture on release
+      isToggleActiveRef.current = false
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
         navigator.vibrate(20)
       }
@@ -108,8 +142,8 @@ export const PushToTalkButton: React.FC<PushToTalkButtonProps> = ({
         {isListening ? (
           <>
             <Mic className="w-12 h-12 text-white animate-bounce" />
-            <span className="text-[11px] font-bold mt-1 text-white tracking-wider">
-              बोलें...
+            <span className="text-[11px] font-bold mt-1 text-white tracking-wider text-center leading-tight">
+              बोलें...<br />(रोकने के लिए टैप)
             </span>
           </>
         ) : isProcessing ? (
@@ -143,8 +177,8 @@ export const PushToTalkButton: React.FC<PushToTalkButtonProps> = ({
         ) : (
           <>
             <Mic className="w-12 h-12 text-white" />
-            <span className="text-[11px] font-bold mt-1 text-white/90 tracking-wide">
-              दबाकर रखें
+            <span className="text-[11px] font-bold mt-1 text-white/90 tracking-wide text-center leading-tight">
+              टैप करें या<br />दबाकर रखें
             </span>
           </>
         )}

@@ -57,7 +57,8 @@ export async function handleGnaniSTT(req: IncomingMessage, res: ServerResponse, 
       return
     }
 
-    const langCode = (req.headers['x-language'] as string) || 'hi-IN'
+    const rawLang = ((req.headers['x-language'] as string) || 'hi-IN').toLowerCase()
+    const langCode = rawLang.startsWith('en') ? 'en-IN' : 'hi-IN'
 
     // Gracefully handle empty or minimal audio buffers (< 50 bytes)
     if (!bodyBuffer || bodyBuffer.length < 50) {
@@ -71,12 +72,22 @@ export async function handleGnaniSTT(req: IncomingMessage, res: ServerResponse, 
       return
     }
 
+    // Truncate buffer if exceeding 22 seconds (22 * 16000 * 2 = 704000 bytes) to strictly prevent Gnani 30s limit (400)
+    const MAX_WAV_BYTES = 44 + 16000 * 2 * 22
+    let safeBuffer = bodyBuffer
+    if (safeBuffer.length > MAX_WAV_BYTES) {
+      safeBuffer = Buffer.from(safeBuffer.subarray(0, MAX_WAV_BYTES))
+      const dataSize = safeBuffer.length - 44
+      safeBuffer.writeUInt32LE(dataSize, 40)
+      safeBuffer.writeUInt32LE(dataSize + 36, 4)
+    }
+
     // Call Gnani Prisma STT via Vachana API
     const formData = new FormData()
-    const audioBlob = new Blob([bodyBuffer], { type: (req.headers['content-type'] as string) || 'audio/wav' })
+    const audioBlob = new Blob([safeBuffer], { type: (req.headers['content-type'] as string) || 'audio/wav' })
     formData.append('audio_file', audioBlob, 'recording.wav')
     formData.append('model', 'prisma-v3.0')
-    formData.append('language_code', langCode === 'en' ? 'en-IN' : 'hi-IN')
+    formData.append('language_code', langCode)
     formData.append('format', 'transcribe')
 
     const gnaniRes = await fetch('https://api.vachana.ai/stt/v3', {
@@ -135,8 +146,8 @@ export async function handleGnaniTTS(_req: IncomingMessage, res: ServerResponse,
       return
     }
 
-    const langCode = language === 'en' ? 'en-IN' : 'hi-IN'
-    const voiceName = language === 'en' ? 'Pranav' : (payload.voice || 'Nalini')
+    const langCode = (language || '').toLowerCase().startsWith('en') ? 'en-IN' : 'hi-IN'
+    const voiceName = langCode === 'en-IN' ? 'Pranav' : (payload.voice || 'Nalini')
 
     const timbreRes = await fetch('https://api.vachana.ai/api/v1/tts/inference', {
       method: 'POST',

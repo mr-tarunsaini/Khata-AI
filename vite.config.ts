@@ -6,56 +6,59 @@ import { VitePWA } from 'vite-plugin-pwa'
 import { fileURLToPath, URL } from 'node:url'
 
 function voiceGatewayPlugin(): Plugin {
+  const attachMiddleware = (server: { middlewares: any }) => {
+    server.middlewares.use(async (req: any, res: any, next: any) => {
+      if (!req.url?.startsWith('/api/voice')) {
+        return next()
+      }
+
+      try {
+        const { handleHealthCheck, handleGnaniSTT, handleGnaniTTS, handleGeminiIntent, handleSyncOfflineQueue } = await import('./server/voiceGateway.ts')
+
+        if (req.url === '/api/voice/health') {
+          return handleHealthCheck(res)
+        }
+
+        const chunks: Buffer[] = []
+        req.on('data', (chunk: any) => chunks.push(Buffer.from(chunk)))
+        req.on('end', async () => {
+          try {
+            const bodyBuffer = Buffer.concat(chunks)
+            const bodyText = bodyBuffer.toString('utf-8')
+
+            if (req.url?.startsWith('/api/voice/stt/stream')) {
+              return await handleGnaniSTT(req, res, bodyBuffer)
+            }
+            if (req.url?.startsWith('/api/voice/tts/synthesize')) {
+              return await handleGnaniTTS(req, res, bodyText)
+            }
+            if (req.url?.startsWith('/api/voice/intent')) {
+              return await handleGeminiIntent(req, res, bodyText)
+            }
+            if (req.url?.startsWith('/api/voice/sync')) {
+              return await handleSyncOfflineQueue(req, res, bodyText)
+            }
+
+            res.writeHead(404)
+            res.end()
+          } catch (innerErr: any) {
+            console.error('Voice gateway request handling error:', innerErr)
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: innerErr?.message || 'Gateway error', fallback: true }))
+          }
+        })
+      } catch (err: any) {
+        console.error('Voice gateway middleware error:', err)
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: err?.message || 'Gateway middleware error', fallback: true }))
+      }
+    })
+  }
+
   return {
     name: 'voice-gateway-plugin',
-    configureServer(server) {
-      server.middlewares.use(async (req, res, next) => {
-        if (!req.url?.startsWith('/api/voice')) {
-          return next()
-        }
-
-        try {
-          const { handleHealthCheck, handleGnaniSTT, handleGnaniTTS, handleGeminiIntent, handleSyncOfflineQueue } = await import('./server/voiceGateway.ts')
-
-          if (req.url === '/api/voice/health') {
-            return handleHealthCheck(res)
-          }
-
-          const chunks: Buffer[] = []
-          req.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
-          req.on('end', async () => {
-            try {
-              const bodyBuffer = Buffer.concat(chunks)
-              const bodyText = bodyBuffer.toString('utf-8')
-
-              if (req.url?.startsWith('/api/voice/stt/stream')) {
-                return await handleGnaniSTT(req, res, bodyBuffer)
-              }
-              if (req.url?.startsWith('/api/voice/tts/synthesize')) {
-                return await handleGnaniTTS(req, res, bodyText)
-              }
-              if (req.url?.startsWith('/api/voice/intent')) {
-                return await handleGeminiIntent(req, res, bodyText)
-              }
-              if (req.url?.startsWith('/api/voice/sync')) {
-                return await handleSyncOfflineQueue(req, res, bodyText)
-              }
-
-              res.writeHead(404)
-              res.end()
-            } catch (innerErr: any) {
-              console.error('Voice gateway request handling error:', innerErr)
-              res.writeHead(200, { 'Content-Type': 'application/json' })
-              res.end(JSON.stringify({ error: innerErr?.message || 'Gateway error', fallback: true }))
-            }
-          })
-        } catch (err: any) {
-          console.error('Voice gateway middleware error:', err)
-          res.writeHead(200, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ error: err?.message || 'Gateway middleware error', fallback: true }))
-        }
-      })
-    }
+    configureServer: attachMiddleware,
+    configurePreviewServer: attachMiddleware
   }
 }
 
