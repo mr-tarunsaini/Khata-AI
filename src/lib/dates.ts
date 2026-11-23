@@ -86,7 +86,11 @@ export function parseRelativeDatePhrase(phrase: string, timeZone: string = DEFAU
 /**
  * Formats a YYYY-MM-DD date into friendly readable label (e.g. "Aaj, 17 Nov", "Kal, 16 Nov", or "15 Nov 2026")
  */
-export function formatFriendlyDate(dateStr: string, language: 'hi' | 'hi-en' | 'en' = 'hi', timeZone: string = DEFAULT_TIMEZONE): string {
+export function formatFriendlyDate(dateStr?: string | null, language: 'hi' | 'hi-en' | 'en' = 'hi', timeZone: string = DEFAULT_TIMEZONE): string {
+  if (!dateStr || typeof dateStr !== 'string') {
+    return language === 'hi' ? 'आज (Today)' : language === 'hi-en' ? 'Aaj (Today)' : 'Today'
+  }
+
   const today = getTodayDateString(timeZone)
   const yesterday = getRelativeDateString(-1, timeZone)
   const dayBefore = getRelativeDateString(-2, timeZone)
@@ -101,22 +105,34 @@ export function formatFriendlyDate(dateStr: string, language: 'hi' | 'hi-en' | '
     return language === 'hi' ? 'परसों (2 days ago)' : language === 'hi-en' ? 'Parso (2 days ago)' : '2 days ago'
   }
 
-  // Format standard date
-  const [year, month, day] = dateStr.split('-').map(Number)
-  const d = new Date(Date.UTC(year, month - 1, day))
-  return new Intl.DateTimeFormat('en-IN', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric'
-  }).format(d)
+  try {
+    // Format standard date
+    const parts = dateStr.split('-').map(Number)
+    if (parts.length < 3 || parts.some(isNaN)) {
+      return dateStr
+    }
+    const [year, month, day] = parts
+    const d = new Date(Date.UTC(year, month - 1, day))
+    if (isNaN(d.getTime())) return dateStr
+
+    return new Intl.DateTimeFormat('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    }).format(d)
+  } catch {
+    return dateStr
+  }
 }
 
 /**
  * Returns formatted current time (e.g. "04:30 PM") in Asia/Kolkata
  */
-export function formatTime(isoString: string, timeZone: string = DEFAULT_TIMEZONE): string {
+export function formatTime(isoString?: string | null, timeZone: string = DEFAULT_TIMEZONE): string {
+  if (!isoString) return ''
   try {
     const d = new Date(isoString)
+    if (isNaN(d.getTime())) return ''
     return new Intl.DateTimeFormat('en-IN', {
       timeZone,
       hour: '2-digit',

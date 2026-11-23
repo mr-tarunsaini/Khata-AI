@@ -20,19 +20,19 @@ function writeString(view: DataView, offset: number, string: string): void {
  * Resamples Float32Array PCM samples from originalSampleRate to exactly 16,000 Hz.
  * Uses high-quality linear interpolation with anti-aliasing averaging for downsampling.
  */
-export function resampleTo16k(audioBuffer: Float32Array, originalSampleRate: number): Float32Array {
-  if (originalSampleRate === 16000) {
+export function resampleTo16k(audioBuffer: Float32Array, originalSampleRate: number = 16000): Float32Array {
+  if (!originalSampleRate || originalSampleRate <= 0 || originalSampleRate === 16000 || !audioBuffer || audioBuffer.length === 0) {
     return audioBuffer
   }
 
   const ratio = originalSampleRate / 16000
-  const newLength = Math.round(audioBuffer.length / ratio)
+  const newLength = Math.max(1, Math.round(audioBuffer.length / ratio))
   const result = new Float32Array(newLength)
   let offsetResult = 0
   let offsetBuffer = 0
 
-  while (offsetResult < result.length) {
-    const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio)
+  while (offsetResult < result.length && offsetBuffer < audioBuffer.length) {
+    const nextOffsetBuffer = Math.max(offsetBuffer + 1, Math.round((offsetResult + 1) * ratio))
     let accum = 0
     let count = 0
     for (let i = offsetBuffer; i < nextOffsetBuffer && i < audioBuffer.length; i++) {

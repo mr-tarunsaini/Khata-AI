@@ -16,6 +16,7 @@ import { InventoryView } from '@/components/inventory/InventoryView'
 import { SettingsView } from '@/components/settings/SettingsView'
 import { AuthView } from '@/components/auth/AuthView'
 import { UndoToast } from '@/components/common/UndoToast'
+import { ErrorBoundary } from '@/components/common/ErrorBoundary'
 
 const MainAppContent: React.FC = () => {
   const { isAuthenticated } = useAuth()
@@ -81,7 +82,11 @@ const MainAppContent: React.FC = () => {
             />
           )}
 
-          {activeTab === 'voice' && <VoiceKhataView />}
+          {activeTab === 'voice' && (
+            <ErrorBoundary>
+              <VoiceKhataView />
+            </ErrorBoundary>
+          )}
 
           {activeTab === 'customers' && (
             <CustomersView

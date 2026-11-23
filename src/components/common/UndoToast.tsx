@@ -22,7 +22,9 @@ export const UndoToast: React.FC = () => {
       setSecondsLeft((prev) => {
         if (prev <= 1) {
           clearInterval(interval)
-          dismissUndoToast()
+          setTimeout(() => {
+            dismissUndoToast()
+          }, 0)
           return 0
         }
         return prev - 1

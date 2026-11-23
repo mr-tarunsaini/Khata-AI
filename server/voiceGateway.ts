@@ -23,22 +23,47 @@ export interface GatewayHealth {
   timestamp: string
 }
 
-const GNANI_API_KEY = (process.env.GNANI_ACCESS_KEY || process.env.GNANI_API_KEY || '').trim()
-const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || '').trim()
+export function getGnaniApiKey(): string {
+  return (process.env.GNANI_ACCESS_KEY || process.env.GNANI_API_KEY || '').trim()
+}
+
+export function getGeminiApiKey(): string {
+  return (process.env.GEMINI_API_KEY || '').trim()
+}
+
+/**
+ * Safely sends a JSON response without throwing ERR_HTTP_HEADERS_SENT
+ * and includes proper CORS headers.
+ */
+export function safeSendJson(res: ServerResponse, statusCode: number, data: any) {
+  if (res.headersSent) return
+  try {
+    res.writeHead(statusCode, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, x-language, Authorization'
+    })
+    res.end(JSON.stringify(data))
+  } catch (err) {
+    console.warn('safeSendJson warning:', err)
+  }
+}
 
 /**
  * Handle /api/voice/health
  */
 export function handleHealthCheck(res: ServerResponse) {
+  const gnaniKey = getGnaniApiKey()
+  const geminiKey = getGeminiApiKey()
   const health: GatewayHealth = {
     status: 'ok',
-    gnaniConfigured: Boolean(GNANI_API_KEY && !GNANI_API_KEY.includes('your_gnani')),
-    geminiConfigured: Boolean(GEMINI_API_KEY && !GEMINI_API_KEY.includes('your_google')),
+    gnaniConfigured: Boolean(gnaniKey && !gnaniKey.includes('your_gnani')),
+    geminiConfigured: Boolean(geminiKey && !geminiKey.includes('your_google')),
     timestamp: new Date().toISOString()
   }
 
-  res.writeHead(200, { 'Content-Type': 'application/json' })
-  res.end(JSON.stringify(health))
+  safeSendJson(res, 200, health)
 }
 
 /**
@@ -46,14 +71,14 @@ export function handleHealthCheck(res: ServerResponse) {
  */
 export async function handleGnaniSTT(req: IncomingMessage, res: ServerResponse, bodyBuffer: Buffer) {
   try {
-    if (!GNANI_API_KEY || GNANI_API_KEY.includes('your_gnani')) {
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({
+    const gnaniKey = getGnaniApiKey()
+    if (!gnaniKey || gnaniKey.includes('your_gnani')) {
+      safeSendJson(res, 200, {
         text: 'Ramesh ka 340 udhaar',
         language: 'hi-IN',
         confidence: 0.96,
         provider: 'Gnani Prisma STT (Simulated Gateway Mode)'
-      }))
+      })
       return
     }
 
@@ -62,13 +87,12 @@ export async function handleGnaniSTT(req: IncomingMessage, res: ServerResponse, 
 
     // Gracefully handle empty or minimal audio buffers (< 50 bytes)
     if (!bodyBuffer || bodyBuffer.length < 50) {
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({
+      safeSendJson(res, 200, {
         text: '',
         language: langCode,
         confidence: 1,
         provider: 'Gnani Prisma STT'
-      }))
+      })
       return
     }
 
@@ -93,41 +117,44 @@ export async function handleGnaniSTT(req: IncomingMessage, res: ServerResponse, 
     const gnaniRes = await fetch('https://api.vachana.ai/stt/v3', {
       method: 'POST',
       headers: {
-        'X-API-Key-ID': GNANI_API_KEY
+        'X-API-Key-ID': gnaniKey
       },
       body: formData
     })
 
     if (!gnaniRes.ok) {
-      const errText = await gnaniRes.text()
-      console.error(`Gnani Prisma STT error (${gnaniRes.status}):`, errText)
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({
+      const errText = await gnaniRes.text().catch(() => '')
+      console.error(`Gnani Prisma STT notice (${gnaniRes.status}):`, errText)
+      safeSendJson(res, 200, {
         text: '',
-        error: `Gnani STT error (${gnaniRes.status}): ${errText}`,
+        error: `Gnani STT notice (${gnaniRes.status}): ${errText}`,
         language: langCode,
         confidence: 0,
         provider: 'Gnani Prisma STT'
-      }))
+      })
       return
     }
 
-    const gnaniData: any = await gnaniRes.json()
-    res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({
+    let gnaniData: any = {}
+    try {
+      gnaniData = await gnaniRes.json()
+    } catch {
+      gnaniData = { transcript: '' }
+    }
+
+    safeSendJson(res, 200, {
       text: gnaniData.transcript || gnaniData.text || '',
       language: gnaniData.detected_language_code || langCode,
       confidence: 0.96,
       provider: 'Gnani Prisma STT'
-    }))
+    })
   } catch (err: any) {
     console.error('Gnani STT gateway proxy error:', err)
-    res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({
+    safeSendJson(res, 200, {
       text: '',
       error: err.message || 'STT processing failed',
       provider: 'Gnani Prisma STT'
-    }))
+    })
   }
 }
 
@@ -140,9 +167,9 @@ export async function handleGnaniTTS(_req: IncomingMessage, res: ServerResponse,
     const textToSpeak = payload.text || ''
     const language = payload.language || 'hi-IN'
 
-    if (!GNANI_API_KEY || GNANI_API_KEY.includes('your_gnani')) {
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ fallbackToSpeechSynthesis: true }))
+    const gnaniKey = getGnaniApiKey()
+    if (!gnaniKey || gnaniKey.includes('your_gnani')) {
+      safeSendJson(res, 200, { fallbackToSpeechSynthesis: true })
       return
     }
 
@@ -152,7 +179,7 @@ export async function handleGnaniTTS(_req: IncomingMessage, res: ServerResponse,
     const timbreRes = await fetch('https://api.vachana.ai/api/v1/tts/inference', {
       method: 'POST',
       headers: {
-        'X-API-Key-ID': GNANI_API_KEY,
+        'X-API-Key-ID': gnaniKey,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
@@ -172,20 +199,23 @@ export async function handleGnaniTTS(_req: IncomingMessage, res: ServerResponse,
     })
 
     if (!timbreRes.ok) {
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ fallbackToSpeechSynthesis: true }))
+      const errText = await timbreRes.text().catch(() => '')
+      console.warn(`Gnani Timbre TTS notice (${timbreRes.status}):`, errText)
+      safeSendJson(res, 200, { fallbackToSpeechSynthesis: true, error: errText })
       return
     }
 
     const audioArrayBuffer = await timbreRes.arrayBuffer()
-    res.writeHead(200, {
-      'Content-Type': timbreRes.headers.get('content-type') || 'audio/wav',
-      'Content-Length': audioArrayBuffer.byteLength.toString()
-    })
-    res.end(Buffer.from(audioArrayBuffer))
+    if (!res.headersSent) {
+      res.writeHead(200, {
+        'Content-Type': timbreRes.headers.get('content-type') || 'audio/wav',
+        'Content-Length': audioArrayBuffer.byteLength.toString(),
+        'Access-Control-Allow-Origin': '*'
+      })
+      res.end(Buffer.from(audioArrayBuffer))
+    }
   } catch (err: any) {
-    res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ fallbackToSpeechSynthesis: true, error: err.message }))
+    safeSendJson(res, 200, { fallbackToSpeechSynthesis: true, error: err.message })
   }
 }
 
@@ -197,13 +227,13 @@ export async function handleGeminiIntent(_req: IncomingMessage, res: ServerRespo
     const payload = JSON.parse(bodyText || '{}')
     const transcript = payload.transcript || ''
 
-    if (!GEMINI_API_KEY || GEMINI_API_KEY.includes('your_google')) {
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ fallbackToRuleParser: true }))
+    const geminiKey = getGeminiApiKey()
+    if (!geminiKey || geminiKey.includes('your_google')) {
+      safeSendJson(res, 200, { fallbackToRuleParser: true })
       return
     }
 
-    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY)
+    const genAI = new GoogleGenerativeAI(geminiKey)
     const model = genAI.getGenerativeModel({
       model: 'gemini-3.5-flash-lite',
       generationConfig: {
@@ -268,11 +298,9 @@ Transcript: "${transcript}"`
     const result = await model.generateContent(prompt)
     const responseJson = JSON.parse(result.response.text())
 
-    res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify(responseJson))
+    safeSendJson(res, 200, responseJson)
   } catch (err: any) {
-    res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ error: err.message, fallbackToRuleParser: true }))
+    safeSendJson(res, 200, { error: err.message, fallbackToRuleParser: true })
   }
 }
 
@@ -291,15 +319,13 @@ export async function handleSyncOfflineQueue(_req: IncomingMessage, res: ServerR
       }
     }
 
-    res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({
+    safeSendJson(res, 200, {
       success: true,
       syncedCount: syncedIds.length,
       syncedIds,
       timestamp: new Date().toISOString()
-    }))
+    })
   } catch (err: any) {
-    res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ error: err.message || 'Sync processing failed', fallback: true }))
+    safeSendJson(res, 200, { error: err.message || 'Sync processing failed', fallback: true })
   }
 }
