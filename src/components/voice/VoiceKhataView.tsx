@@ -107,6 +107,11 @@ export const VoiceKhataView: React.FC = () => {
 
   const abortControllerRef = useRef<AbortController | null>(null)
   const recordingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const noSpeechTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const maxRecordTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hasSpokenRef = useRef(false)
+  const isStoppingRef = useRef(false)
 
   // Check active session memory every second
   useEffect(() => {
@@ -256,14 +261,58 @@ export const VoiceKhataView: React.FC = () => {
   // Process a recognized speech transcript
   const processTranscript = useCallback(
     async (rawText: string, sttMs: number = 0) => {
-      setStatus('processing')
-      setErrorMessage('')
-      setInterimTranscript('')
-      setNewCustomerPrompt(null)
-
       const cleanText = rawText.trim()
       setTranscript(cleanText)
+      setErrorMessage('')
+      setInterimTranscript('')
 
+      // 0. Handle verbal confirmation for pending new customer creation
+      if (newCustomerPrompt) {
+        const lower = cleanText.toLowerCase()
+        const isAffirmative =
+          lower.includes('haan') ||
+          lower.includes('ha') ||
+          lower.includes('yes') ||
+          lower.includes('jodo') ||
+          lower.includes('kholo') ||
+          lower.includes('khole') ||
+          lower.includes('banao') ||
+          lower.includes('naya khata') ||
+          lower.includes('is naam ka') ||
+          lower.includes('theek') ||
+          lower.includes('sahi') ||
+          lower.includes('done') ||
+          lower.includes('ji haan') ||
+          lower.includes('हाँ') ||
+          lower.includes('जोड़ो') ||
+          lower.includes('खोलो') ||
+          lower.includes('बनाओ') ||
+          lower.includes('नया खाता')
+
+        const isNegative =
+          lower.includes('nahi') ||
+          lower.includes('no') ||
+          lower.includes('cancel') ||
+          lower.includes('radd') ||
+          lower.includes('mat jodo') ||
+          lower.includes('नहीं')
+
+        if (isAffirmative) {
+          await handleConfirmNewCustomer()
+          return
+        }
+
+        if (isNegative) {
+          setNewCustomerPrompt(null)
+          setStatus('idle')
+          const cancelMsg = language === 'en' ? 'Customer creation cancelled' : 'नया खाता जोड़ना रद्द किया गया'
+          await speakResponse(cancelMsg, sttMs, 0, 0)
+          return
+        }
+      }
+
+      setNewCustomerPrompt(null)
+      setStatus('processing')
       const intentStart = performance.now()
       setStatus('understanding')
 
@@ -579,52 +628,31 @@ export const VoiceKhataView: React.FC = () => {
     ]
   )
 
-  // Start Voice Capture (Gnani AI)
-  const handleStartCapture = async () => {
-    if (!isOnline) {
-      setStatus('offline')
-      return
+  // Helper to clear all recording/silence timers
+  const clearCaptureTimers = useCallback(() => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current)
+      silenceTimerRef.current = null
     }
-
+    if (noSpeechTimerRef.current) {
+      clearTimeout(noSpeechTimerRef.current)
+      noSpeechTimerRef.current = null
+    }
+    if (maxRecordTimerRef.current) {
+      clearTimeout(maxRecordTimerRef.current)
+      maxRecordTimerRef.current = null
+    }
     if (recordingTimerRef.current) {
       clearTimeout(recordingTimerRef.current)
       recordingTimerRef.current = null
     }
+  }, [])
 
-    setTranscript('')
-    setInterimTranscript('')
-    setErrorMessage('')
-    setDuplicateCandidates(null)
-    setNewCustomerPrompt(null)
-    setStatus('listening')
-
-    abortControllerRef.current = new AbortController()
-
-    // Unlock Web Audio API on user interaction so subsequent TTS playback is never blocked
-    audioPlayer.unlock()
-
-    // Safety auto-stop after 15 seconds to ensure recordings never exceed Gnani's 30s threshold
-    recordingTimerRef.current = setTimeout(() => {
-      handleStopCapture()
-    }, 15000)
-
-    try {
-      await audioRecorder.startRecording((volume) => setAudioVolume(volume))
-    } catch (e: any) {
-      console.warn('Microphone recording error:', e)
-      setStatus('error')
-      setErrorMessage(e.message || 'Microphone access failed. Please enable mic permissions.')
-    }
-  }
-
-  // End Voice Capture on button release
-  const handleStopCapture = async () => {
-    if (recordingTimerRef.current) {
-      clearTimeout(recordingTimerRef.current)
-      recordingTimerRef.current = null
-    }
-
-    if (status !== 'listening') return
+  // End Voice Capture (either auto-off on silence or manual button click)
+  const handleStopCapture = useCallback(async () => {
+    if (isStoppingRef.current) return
+    isStoppingRef.current = true
+    clearCaptureTimers()
 
     try {
       setStatus('processing')
@@ -633,11 +661,13 @@ export const VoiceKhataView: React.FC = () => {
 
       if (abortControllerRef.current?.signal.aborted) {
         setStatus('idle')
+        isStoppingRef.current = false
         return
       }
 
       if (!audioBlob || audioBlob.size < 200) {
         setStatus('idle')
+        isStoppingRef.current = false
         return
       }
 
@@ -660,14 +690,84 @@ export const VoiceKhataView: React.FC = () => {
         setStatus('error')
         setErrorMessage(err.message || 'Speech recognition failed')
       }
+    } finally {
+      isStoppingRef.current = false
     }
-  }
+  }, [clearCaptureTimers, language, processTranscript])
 
-  const handleCancelCapture = () => {
-    if (recordingTimerRef.current) {
-      clearTimeout(recordingTimerRef.current)
-      recordingTimerRef.current = null
+  // Start Voice Capture (YouTube Voice Search style: single tap to start, auto-off on silence)
+  const handleStartCapture = useCallback(async () => {
+    if (!isOnline) {
+      setStatus('offline')
+      return
     }
+
+    clearCaptureTimers()
+    hasSpokenRef.current = false
+    isStoppingRef.current = false
+
+    setTranscript('')
+    setInterimTranscript('')
+    setErrorMessage('')
+    setDuplicateCandidates(null)
+    setStatus('listening')
+
+    abortControllerRef.current = new AbortController()
+
+    // Unlock Web Audio API on user interaction so subsequent TTS playback is never blocked
+    audioPlayer.unlock()
+
+    // 1. No speech timeout: If user clicks mic but says nothing for 4.5 seconds, auto-stop
+    noSpeechTimerRef.current = setTimeout(() => {
+      if (!hasSpokenRef.current && !isStoppingRef.current) {
+        handleStopCapture()
+      }
+    }, 4500)
+
+    // 2. Safety max ceiling: Strictly auto-stop after 12 seconds to prevent long recordings
+    maxRecordTimerRef.current = setTimeout(() => {
+      if (!isStoppingRef.current) {
+        handleStopCapture()
+      }
+    }, 12000)
+
+    try {
+      await audioRecorder.startRecording((volume) => {
+        setAudioVolume(volume)
+
+        // YouTube-style voice activity & silence detection:
+        if (volume >= 10) {
+          if (!hasSpokenRef.current) {
+            hasSpokenRef.current = true
+            if (noSpeechTimerRef.current) {
+              clearTimeout(noSpeechTimerRef.current)
+              noSpeechTimerRef.current = null
+            }
+          }
+          // Currently speaking: reset silence countdown
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current)
+            silenceTimerRef.current = null
+          }
+        } else if (hasSpokenRef.current && volume < 8) {
+          // Speech was detected and now silent: auto-off after 1.8s
+          if (!silenceTimerRef.current && !isStoppingRef.current) {
+            silenceTimerRef.current = setTimeout(() => {
+              handleStopCapture()
+            }, 1800)
+          }
+        }
+      })
+    } catch (e: any) {
+      console.warn('Microphone recording error:', e)
+      setStatus('error')
+      setErrorMessage(e.message || 'Microphone access failed. Please enable mic permissions.')
+    }
+  }, [clearCaptureTimers, handleStopCapture, isOnline])
+
+  const handleCancelCapture = useCallback(() => {
+    clearCaptureTimers()
+    isStoppingRef.current = false
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
       abortControllerRef.current = null
@@ -683,7 +783,16 @@ export const VoiceKhataView: React.FC = () => {
     setNewCustomerPrompt(null)
     setErrorMessage('')
     setInterimTranscript('')
-  }
+  }, [clearCaptureTimers])
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      clearCaptureTimers()
+      audioRecorder.abortRecording()
+      audioPlayer.stopAll()
+    }
+  }, [clearCaptureTimers])
 
   const handleSelectCandidate = (cand: Customer) => {
     if (parsedIntent && parsedIntent.amount_paise) {
@@ -772,56 +881,56 @@ export const VoiceKhataView: React.FC = () => {
         )}
 
         {/* State Label Banner */}
-        <div className="mb-2">
+        <div className="mb-2 notranslate" translate="no">
           {status === 'idle' && (
-            <span className="text-xs font-bold text-[#667085] uppercase tracking-wider">
+            <span key="st-idle" className="text-xs font-bold text-[#667085] uppercase tracking-wider">
               {t.voiceIdleHint}
             </span>
           )}
           {status === 'listening' && (
-            <span className="text-xs font-bold text-[#087F6E] uppercase tracking-wider animate-pulse">
+            <span key="st-listening" className="text-xs font-bold text-[#087F6E] uppercase tracking-wider animate-pulse">
               ● {t.voiceListening}
             </span>
           )}
           {status === 'processing' && (
-            <span className="text-xs font-bold text-[#E7A23B] uppercase tracking-wider">
+            <span key="st-processing" className="text-xs font-bold text-[#E7A23B] uppercase tracking-wider">
               {t.voiceProcessing}
             </span>
           )}
           {status === 'understanding' && (
-            <span className="text-xs font-bold text-[#253B73] uppercase tracking-wider">
+            <span key="st-understanding" className="text-xs font-bold text-[#253B73] uppercase tracking-wider">
               {t.voiceUnderstanding}
             </span>
           )}
           {status === 'clarification_required' && (
-            <span className="text-xs font-bold text-[#E7A23B] uppercase tracking-wider">
+            <span key="st-clarify" className="text-xs font-bold text-[#E7A23B] uppercase tracking-wider">
               {t.voiceClarification}
             </span>
           )}
           {status === 'confirm_create_customer' && (
-            <span className="text-xs font-bold text-[#E7A23B] uppercase tracking-wider">
+            <span key="st-confirm" className="text-xs font-bold text-[#E7A23B] uppercase tracking-wider">
               नया ग्राहक पुष्टि आवश्यक
             </span>
           )}
           {status === 'saving' && (
-            <span className="text-xs font-bold text-[#253B73] uppercase tracking-wider">
+            <span key="st-saving" className="text-xs font-bold text-[#253B73] uppercase tracking-wider">
               {t.voiceSaving}
             </span>
           )}
           {status === 'success' && (
-            <span className="text-xs font-bold text-[#16794B] uppercase tracking-wider flex items-center justify-center gap-1">
+            <span key="st-success" className="text-xs font-bold text-[#16794B] uppercase tracking-wider flex items-center justify-center gap-1">
               <CheckCircle2 className="w-4 h-4" />
               {t.voiceSuccess}
             </span>
           )}
           {status === 'error' && (
-            <span className="text-xs font-bold text-[#B42318] uppercase tracking-wider flex items-center justify-center gap-1">
+            <span key="st-error" className="text-xs font-bold text-[#B42318] uppercase tracking-wider flex items-center justify-center gap-1">
               <AlertTriangle className="w-4 h-4" />
               {errorMessage || t.voiceError}
             </span>
           )}
           {status === 'offline' && (
-            <span className="text-xs font-bold text-[#667085] uppercase tracking-wider">
+            <span key="st-offline" className="text-xs font-bold text-[#667085] uppercase tracking-wider">
               {t.voiceOffline}
             </span>
           )}
@@ -842,10 +951,10 @@ export const VoiceKhataView: React.FC = () => {
           />
         </div>
 
-        <p className="text-xs text-[#667085] mt-4 max-w-sm">
+        <p className="text-xs text-[#667085] mt-4 max-w-sm notranslate" translate="no">
           {status === 'listening'
-            ? 'बोलना समाप्त करने के लिए बटन छोड़ें'
-            : 'माइक दबाकर रखें और अपनी भाषा (हिंदी / Hinglish) में बोलें'}
+            ? 'बोलें... बोलने के बाद अपने आप बंद हो जाएगा (या रोकने के लिए टैप करें)'
+            : 'माइक पर टैप करें और बोलें (Tap to Speak)'}
         </p>
 
         {status === 'listening' && (
@@ -861,7 +970,7 @@ export const VoiceKhataView: React.FC = () => {
 
       {/* Live Interim / Final Transcript Card */}
       {(transcript || interimTranscript) && (
-        <div className="bg-white rounded-2xl p-5 border border-[#E3E5E0] shadow-xs space-y-2 animate-fade-in">
+        <div className="bg-white rounded-2xl p-5 border border-[#E3E5E0] shadow-xs space-y-2 animate-fade-in notranslate" translate="no">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-[#667085] uppercase tracking-wider flex items-center gap-1.5">
               <Mic className="w-3.5 h-3.5 text-[#087F6E]" />
@@ -881,17 +990,17 @@ export const VoiceKhataView: React.FC = () => {
 
       {/* Voice Customer Creation Confirmation Card (Feature 3) */}
       {newCustomerPrompt && (
-        <div className="bg-amber-50 rounded-2xl p-5 border border-amber-300 shadow-sm space-y-3 animate-fade-in">
+        <div key="new-customer-card" className="bg-amber-50 rounded-2xl p-5 border border-amber-300 shadow-sm space-y-3 animate-fade-in notranslate" translate="no">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
               <UserPlus className="w-4 h-4 text-amber-700" />
-              नया ग्राहक जोड़ें (Create New Customer)
+              नया खाता जोड़ें (Create New Customer)
             </span>
             <span className="text-xs text-[#667085]">पुष्टि आवश्यक</span>
           </div>
 
           <p className="text-sm font-semibold text-[#17233B]">
-            "<strong>{newCustomerPrompt.name}</strong>" नाम का कोई ग्राहक पहले से दर्ज नहीं है। क्या इनका नया खाता खोलें?
+            "<strong>{newCustomerPrompt.name}</strong>" नाम का कोई खाता पहले से दर्ज नहीं है। क्या इनका नया खाता जोड़ें?
           </p>
 
           {newCustomerPrompt.amount_paise && newCustomerPrompt.amount_paise > 0 && (
@@ -909,7 +1018,7 @@ export const VoiceKhataView: React.FC = () => {
               className="flex-1 py-2.5 px-4 bg-[#087F6E] hover:bg-[#066154] text-white text-xs font-bold rounded-xl shadow-xs transition cursor-pointer flex items-center justify-center gap-1.5"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>हाँ, नया खाता खोलें</span>
+              <span>इस नाम का नया खाता जोड़ें</span>
             </button>
             <button
               onClick={() => {

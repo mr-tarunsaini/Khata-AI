@@ -73,4 +73,35 @@ describe('Intent Parser Engine', () => {
     expect(res.relative_date_phrase).toBe('kal')
     expect(res.amount_paise).toBe(50000)
   })
+
+  it('parses: "Tarun ka naya khata jodo" -> CREATE_CUSTOMER', () => {
+    const res = parseIntentFromTranscript('Tarun ka naya khata jodo')
+    expect(res.intent).toBe('CREATE_CUSTOMER')
+    expect(res.customer_name).toBe('Tarun')
+  })
+
+  it('parses: "Manoj ka naya khata khole" -> CREATE_CUSTOMER', () => {
+    const res = parseIntentFromTranscript('Manoj ka naya khata khole')
+    expect(res.intent).toBe('CREATE_CUSTOMER')
+    expect(res.customer_name).toBe('Manoj')
+  })
+
+  it('parses: "Is naam ka naya khata jode" -> CREATE_CUSTOMER', () => {
+    const res = parseIntentFromTranscript('Is naam ka naya khata jode')
+    expect(res.intent).toBe('CREATE_CUSTOMER')
+  })
+
+  it('parses unknown customer in transaction: "Tarun ka 500 udhaar" -> ADD_CREDIT with name Tarun', () => {
+    const res = parseIntentFromTranscript('Tarun ka 500 udhaar')
+    expect(res.intent).toBe('ADD_CREDIT')
+    expect(res.customer_name).toBe('Tarun')
+    expect(res.amount_paise).toBe(50000)
+  })
+
+  it('parses Devanagari Hindi transaction: "तरुण का 500 उधार"', () => {
+    const res = parseIntentFromTranscript('तरुण का 500 उधार')
+    expect(res.intent).toBe('ADD_CREDIT')
+    expect(res.customer_name).toBe('तरुण')
+    expect(res.amount_paise).toBe(50000)
+  })
 })

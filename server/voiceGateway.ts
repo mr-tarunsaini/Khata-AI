@@ -284,7 +284,7 @@ Intents:
 - QUERY_DAILY_CREDIT: today's total credit ("Aaj kitna udhaar gaya")
 - QUERY_DAILY_PAYMENTS: today's total collection ("Aaj kitna payment aaya")
 - CORRECT_PENDING_TRANSACTION: correction ("Nahi, 430", "Galti se 200 bol diya, 300 likho")
-- CREATE_CUSTOMER: register customer ("Naya grahak Manoj Kumar jodo")
+- CREATE_CUSTOMER: register customer ("Naya grahak Manoj Kumar jodo", "Manoj ka naya khata jodo", "Tarun ka khata banao", "Is naam ka naya khata jode")
 - DAILY_CLOSING_REPORT: closing hisaab ("Aaj ka hisaab dikhao", "Daily closing report", "Dukan band hisaab")
 - ANALYTICS_QUERY: debtor rankings / aging ("Sabse zyada udhaar kiska hai", "30 din se kisne payment nahi diya", "Recovery rate")
 - UNDO_TRANSACTION: undo last transaction ("Pichhla hisaab undo karo", "Transaction cancel karo")
